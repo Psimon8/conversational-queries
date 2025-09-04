@@ -1,5 +1,5 @@
 import streamlit as st
-import openai
+from openai import OpenAI
 import pandas as pd
 import json
 import time
@@ -22,10 +22,11 @@ st.sidebar.header("⚙️ Configuration")
 api_key = st.sidebar.text_input("Clé API OpenAI", type="password", help="Votre clé API OpenAI pour GPT-4o mini")
 
 if api_key:
-    openai.api_key = api_key
+    client = OpenAI(api_key=api_key)
     st.sidebar.success("✅ API configurée")
 else:
     st.sidebar.warning("⚠️ Veuillez entrer votre clé API OpenAI")
+    client = None
 
 # Input pour la thématique
 thematique = st.text_input(
@@ -37,13 +38,13 @@ thematique = st.text_input(
 # Fonctions utilitaires
 def call_gpt4o_mini(prompt, max_retries=3):
     """Appel à l'API GPT-4o mini avec gestion d'erreurs"""
-    if not api_key:
+    if not client:
         st.error("❌ Clé API manquante")
         return None
     
     for attempt in range(max_retries):
         try:
-            response = openai.ChatCompletion.create(
+            response = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
                     {
