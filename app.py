@@ -18,6 +18,12 @@ st.set_page_config(
     layout="wide"
 )
 
+# Initialisation du session state
+if 'analysis_results' not in st.session_state:
+    st.session_state.analysis_results = None
+if 'analysis_metadata' not in st.session_state:
+    st.session_state.analysis_metadata = None
+
 # Titre principal
 st.title("🔍 Optimiseur de Requêtes Conversationnelles SEO")
 st.subheader("Analyse basée sur les suggestions Google pour l'optimisation SEO")
@@ -304,226 +310,271 @@ with tab1:
     with col4:
         lang = st.selectbox("Langue", ["fr", "en", "es", "de", "it"], index=0)
     
-    if keywords_input and api_key:
-        keywords = [kw.strip() for kw in keywords_input.split('\n') if kw.strip()]
-        
-        if st.button("🚀 Analyser les suggestions", type="primary"):
-            if not keywords:
-                st.error("❌ Veuillez entrer au moins un mot-clé")
-            else:
-                # Progress tracking
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                # Container pour les résultats
-                results_container = st.container()
-                
-                # Étape 1: Collecte des suggestions multi-niveaux
-                total_steps = 3 if generate_questions else 2
-                status_text.text("⏳ Étape 1/{}: Collecte des suggestions Google multi-niveaux...".format(total_steps))
-                
-                all_suggestions = []
-                
-                for i, keyword in enumerate(keywords):
-                    keyword_suggestions = get_google_suggestions_multilevel(
-                        keyword, 
-                        lang, 
-                        level1_count, 
-                        level2_count, 
-                        enable_level2
-                    )
-                    all_suggestions.extend(keyword_suggestions)
-                    
-                    progress_bar.progress((i + 1) * 40 // len(keywords))
-                    status_text.text(f"⏳ Collecte en cours... {len(all_suggestions)} suggestions trouvées")
-                
-                if not all_suggestions:
-                    st.error("❌ Aucune suggestion trouvée")
+    # Boutons d'action
+    col_analyze, col_clear = st.columns([4, 1])
+    with col_analyze:
+        if keywords_input and api_key:
+            keywords = [kw.strip() for kw in keywords_input.split('\n') if kw.strip()]
+            
+            if st.button("🚀 Analyser les suggestions", type="primary"):
+                if not keywords:
+                    st.error("❌ Veuillez entrer au moins un mot-clé")
                 else:
-                    # Affichage des statistiques de collecte
-                    level_counts = {}
-                    for suggestion in all_suggestions:
-                        level = suggestion['Niveau']
-                        level_counts[level] = level_counts.get(level, 0) + 1
+                    # Réinitialiser les résultats précédents
+                    st.session_state.analysis_results = None
+                    st.session_state.analysis_metadata = None
                     
-                    st.info(f"✅ {len(all_suggestions)} suggestions collectées - Niveau 0: {level_counts.get(0, 0)}, Niveau 1: {level_counts.get(1, 0)}, Niveau 2: {level_counts.get(2, 0)}")
+                    # Progress tracking
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
                     
-                    if generate_questions:
-                        # Étape 2: Génération des questions conversationnelles
-                        status_text.text("⏳ Étape 2/3: Génération des questions conversationnelles...")
+                    # Étape 1: Collecte des suggestions multi-niveaux
+                    total_steps = 3 if generate_questions else 2
+                    status_text.text("⏳ Étape 1/{}: Collecte des suggestions Google multi-niveaux...".format(total_steps))
+                    
+                    all_suggestions = []
+                    
+                    for i, keyword in enumerate(keywords):
+                        keyword_suggestions = get_google_suggestions_multilevel(
+                            keyword, 
+                            lang, 
+                            level1_count, 
+                            level2_count, 
+                            enable_level2
+                        )
+                        all_suggestions.extend(keyword_suggestions)
                         
+                        progress_bar.progress((i + 1) * 40 // len(keywords))
+                        status_text.text(f"⏳ Collecte en cours... {len(all_suggestions)} suggestions trouvées")
+                    
+                    if not all_suggestions:
+                        st.error("❌ Aucune suggestion trouvée")
+                    else:
+                        # Affichage des statistiques de collecte
+                        level_counts = {}
+                        for suggestion in all_suggestions:
+                            level = suggestion['Niveau']
+                            level_counts[level] = level_counts.get(level, 0) + 1
+                        
+                        st.info(f"✅ {len(all_suggestions)} suggestions collectées - Niveau 0: {level_counts.get(0, 0)}, Niveau 1: {level_counts.get(1, 0)}, Niveau 2: {level_counts.get(2, 0)}")
+                        
+                        final_consolidated_data = []
                         all_questions_data = []
-                        processed = 0
-                        total_items = len(all_suggestions)
-                        
-                        for item in all_suggestions:
-                            keyword = item['Mot-clé']
-                            suggestion = item['Suggestion Google']
-                            niveau = item['Niveau']
-                            parent = item['Parent']
-                            
-                            prompt = f"""
-                            Basé sur le mot-clé "{keyword}" et la suggestion Google "{suggestion}" (niveau {niveau}), 
-                            génère EXACTEMENT 5 questions conversationnelles SEO pertinentes au format question.
-                            
-                            Les questions doivent :
-                            - Être naturelles et conversationnelles
-                            - Optimisées pour la recherche vocale
-                            - Pertinentes pour l'intention de recherche
-                            - Se terminer par un point d'interrogation
-                            - Être variées dans leur formulation
-                            
-                            Présente-les sous forme de liste numérotée de 1 à 5.
-                            """
-                            
-                            response = call_gpt4o_mini(prompt)
-                            if response:
-                                questions = extract_questions_from_response(response)
-                                for question in questions[:5]:
-                                    all_questions_data.append({
-                                        'Mot-clé': keyword,
-                                        'Suggestion Google': suggestion,
-                                        'Question Conversationnelle': question,
-                                        'Niveau': niveau,
-                                        'Parent': parent
-                                    })
-                            
-                            processed += 1
-                            progress_bar.progress(40 + (processed * 40 // total_items))
-                            time.sleep(0.5)  # Délai réduit
-                            
-                            # Affichage du progrès en temps réel
-                            current_questions = len(all_questions_data)
-                            status_text.text(f"⏳ Étape 2/3: {current_questions} questions générées...")
-                        
-                        if not all_questions_data:
-                            st.error("❌ Aucune question générée")
-                        else:
-                            st.info(f"✅ {len(all_questions_data)} questions générées au total")
-                            
-                            # Étape 3: Consolidation et déduplication
-                            status_text.text("⏳ Étape 3/3: Consolidation et déduplication...")
-                            progress_bar.progress(90)
-                            
-                            final_consolidated_data = consolidate_and_deduplicate(
-                                all_questions_data, 
-                                final_questions_count
-                            )
-                    
-                    progress_bar.progress(100)
-                    status_text.text("✅ Analyse terminée !")
-                    
-                    # Affichage des résultats
-                    with results_container:
-                        st.markdown("## 📊 Résultats de l'analyse")
                         
                         if generate_questions:
-                            # Métriques avec questions
-                            col1, col2, col3, col4, col5 = st.columns(5)
-                            with col1:
-                                st.metric("Mots-clés analysés", len(keywords))
-                            with col2:
-                                st.metric("Suggestions collectées", len(all_suggestions))
-                            with col3:
-                                st.metric("Questions générées", len(all_questions_data))
-                            with col4:
-                                st.metric("Questions finales", len(final_consolidated_data))
-                            with col5:
-                                st.metric("Taux consolidation", f"{(len(all_questions_data) - len(final_consolidated_data)) / len(all_questions_data) * 100:.0f}%")
+                            # Étape 2: Génération des questions conversationnelles
+                            status_text.text("⏳ Étape 2/3: Génération des questions conversationnelles...")
                             
-                            # Tableau des résultats avec questions
-                            st.markdown("### 📋 Questions conversationnelles (par pertinence)")
-                            df_results = pd.DataFrame(final_consolidated_data)
-                            df_display = df_results[['Requêtes Conversationnelles', 'Suggestion', 'Mot-clé']].copy()
-                            st.dataframe(df_display, use_container_width=True)
-                        
-                        # Tableau des suggestions par niveau
-                        st.markdown("### 🔍 Suggestions collectées par niveau")
-                        
-                        # Créer un DataFrame pour les suggestions
-                        suggestions_df = pd.DataFrame(all_suggestions)
-                        suggestions_display = suggestions_df[['Mot-clé', 'Suggestion Google', 'Niveau', 'Parent']].copy()
-                        
-                        # Filtres par niveau
-                        nivel_filter = st.multiselect(
-                            "Filtrer par niveau",
-                            options=[0, 1, 2],
-                            default=[0, 1, 2] if enable_level2 else [0, 1],
-                            format_func=lambda x: f"Niveau {x}"
-                        )
-                        
-                        if nivel_filter:
-                            filtered_suggestions = suggestions_display[suggestions_display['Niveau'].isin(nivel_filter)]
-                            st.dataframe(filtered_suggestions, use_container_width=True)
-                        
-                        # Statistiques détaillées
-                        with st.expander("📊 Statistiques détaillées"):
-                            if generate_questions:
-                                st.markdown(f"**Questions éliminées:** {len(all_questions_data) - len(final_consolidated_data)}")
-                                st.markdown(f"**Questions conservées:** {len(final_consolidated_data)}")
+                            processed = 0
+                            total_items = len(all_suggestions)
                             
-                            st.markdown("**Répartition des suggestions par niveau:**")
-                            for level, count in level_counts.items():
-                                st.markdown(f"- Niveau {level}: {count} suggestions")
+                            for item in all_suggestions:
+                                keyword = item['Mot-clé']
+                                suggestion = item['Suggestion Google']
+                                niveau = item['Niveau']
+                                parent = item['Parent']
+                                
+                                prompt = f"""
+                                Basé sur le mot-clé "{keyword}" et la suggestion Google "{suggestion}" (niveau {niveau}), 
+                                génère EXACTEMENT 5 questions conversationnelles SEO pertinentes au format question.
+                                
+                                Les questions doivent :
+                                - Être naturelles et conversationnelles
+                                - Optimisées pour la recherche vocale
+                                - Pertinentes pour l'intention de recherche
+                                - Se terminer par un point d'interrogation
+                                - Être variées dans leur formulation
+                                
+                                Présente-les sous forme de liste numérotée de 1 à 5.
+                                """
+                                
+                                response = call_gpt4o_mini(prompt)
+                                if response:
+                                    questions = extract_questions_from_response(response)
+                                    for question in questions[:5]:
+                                        all_questions_data.append({
+                                            'Mot-clé': keyword,
+                                            'Suggestion Google': suggestion,
+                                            'Question Conversationnelle': question,
+                                            'Niveau': niveau,
+                                            'Parent': parent
+                                        })
+                                
+                                processed += 1
+                                progress_bar.progress(40 + (processed * 40 // total_items))
+                                time.sleep(0.5)  # Délai réduit
+                                
+                                # Affichage du progrès en temps réel
+                                current_questions = len(all_questions_data)
+                                status_text.text(f"⏳ Étape 2/3: {current_questions} questions générées...")
                             
-                            # Répartition par mot-clé
-                            keyword_counts = suggestions_df['Mot-clé'].value_counts()
-                            st.markdown("**Répartition par mot-clé:**")
-                            for keyword, count in keyword_counts.items():
-                                st.markdown(f"- {keyword}: {count} suggestions")
-                        
-                        # Export des résultats
-                        st.markdown("### 📤 Export des résultats")
-                        
-                        col1, col2 = st.columns(2)
-                        
-                        with col1:
-                            if generate_questions:
-                                # Export Excel des questions
-                                excel_file = create_excel_file(df_display)
-                                st.download_button(
-                                    label="📊 Télécharger Questions (Excel)",
-                                    data=excel_file,
-                                    file_name="questions_conversationnelles_multiniveaux.xlsx",
-                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            if not all_questions_data:
+                                st.error("❌ Aucune question générée")
+                            else:
+                                st.info(f"✅ {len(all_questions_data)} questions générées au total")
+                                
+                                # Étape 3: Consolidation et déduplication
+                                status_text.text("⏳ Étape 3/3: Consolidation et déduplication...")
+                                progress_bar.progress(90)
+                                
+                                final_consolidated_data = consolidate_and_deduplicate(
+                                    all_questions_data, 
+                                    final_questions_count
                                 )
-                            
-                            # Export Excel des suggestions
-                            suggestions_excel = create_excel_file(suggestions_display)
-                            st.download_button(
-                                label="🔍 Télécharger Suggestions (Excel)",
-                                data=suggestions_excel,
-                                file_name="suggestions_google_multiniveaux.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                            )
                         
-                        with col2:
-                            # Export JSON complet
-                            export_json = {
-                                "metadata": {
-                                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-                                    "keywords_analyzed": keywords,
-                                    "level1_count": level1_count,
-                                    "level2_count": level2_count,
-                                    "level2_enabled": enable_level2,
-                                    "questions_generated": generate_questions,
-                                    "total_suggestions": len(all_suggestions),
-                                    "level_distribution": level_counts
-                                },
-                                "suggestions": all_suggestions,
-                                "questions": final_consolidated_data if generate_questions else []
-                            }
-                            
-                            json_data = json.dumps(export_json, ensure_ascii=False, indent=2)
-                            st.download_button(
-                                label="📋 Télécharger Données (JSON)",
-                                data=json_data,
-                                file_name="analyse_complete_multiniveaux.json",
-                                mime="application/json"
-                            )
+                        progress_bar.progress(100)
+                        status_text.text("✅ Analyse terminée !")
+                        
+                        # Sauvegarder les résultats dans le session state
+                        st.session_state.analysis_results = {
+                            'all_suggestions': all_suggestions,
+                            'all_questions_data': all_questions_data,
+                            'final_consolidated_data': final_consolidated_data,
+                            'level_counts': level_counts
+                        }
+                        
+                        st.session_state.analysis_metadata = {
+                            'keywords': keywords,
+                            'level1_count': level1_count,
+                            'level2_count': level2_count,
+                            'enable_level2': enable_level2,
+                            'generate_questions': generate_questions,
+                            'final_questions_count': final_questions_count if generate_questions else 0,
+                            'timestamp': time.strftime("%Y-%m-%d %H:%M:%S")
+                        }
+                        
+                        # Nettoyer les éléments temporaires
+                        progress_bar.empty()
+                        status_text.empty()
+        elif not api_key:
+            st.warning("⚠️ Veuillez configurer votre clé API OpenAI dans la barre latérale pour commencer l'analyse.")
     
-    elif not api_key:
-        st.warning("⚠️ Veuillez configurer votre clé API OpenAI dans la barre latérale pour commencer l'analyse.")
+    with col_clear:
+        if st.button("🗑️ Effacer", help="Effacer les résultats actuels"):
+            st.session_state.analysis_results = None
+            st.session_state.analysis_metadata = None
+            st.rerun()
+    
+    # Affichage des résultats sauvegardés
+    if st.session_state.analysis_results is not None:
+        results = st.session_state.analysis_results
+        metadata = st.session_state.analysis_metadata
+        
+        st.markdown("## 📊 Résultats de l'analyse")
+        
+        if metadata['generate_questions']:
+            # Métriques avec questions
+            col1, col2, col3, col4, col5 = st.columns(5)
+            with col1:
+                st.metric("Mots-clés analysés", len(metadata['keywords']))
+            with col2:
+                st.metric("Suggestions collectées", len(results['all_suggestions']))
+            with col3:
+                st.metric("Questions générées", len(results['all_questions_data']))
+            with col4:
+                st.metric("Questions finales", len(results['final_consolidated_data']))
+            with col5:
+                consolidation_rate = (len(results['all_questions_data']) - len(results['final_consolidated_data'])) / len(results['all_questions_data']) * 100 if results['all_questions_data'] else 0
+                st.metric("Taux consolidation", f"{consolidation_rate:.0f}%")
+            
+            # Tableau des résultats avec questions
+            st.markdown("### 📋 Questions conversationnelles (par pertinence)")
+            df_results = pd.DataFrame(results['final_consolidated_data'])
+            df_display = df_results[['Requêtes Conversationnelles', 'Suggestion', 'Mot-clé']].copy()
+            st.dataframe(df_display, use_container_width=True)
+        else:
+            # Métriques sans questions
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Mots-clés analysés", len(metadata['keywords']))
+            with col2:
+                st.metric("Suggestions collectées", len(results['all_suggestions']))
+            with col3:
+                st.metric("Niveaux activés", "2" if metadata['enable_level2'] else "1")
+        
+        # Tableau des suggestions par niveau
+        st.markdown("### 🔍 Suggestions collectées par niveau")
+        
+        # Créer un DataFrame pour les suggestions
+        suggestions_df = pd.DataFrame(results['all_suggestions'])
+        suggestions_display = suggestions_df[['Mot-clé', 'Suggestion Google', 'Niveau', 'Parent']].copy()
+        
+        # Filtres par niveau
+        available_levels = suggestions_df['Niveau'].unique().tolist()
+        nivel_filter = st.multiselect(
+            "Filtrer par niveau",
+            options=available_levels,
+            default=available_levels,
+            format_func=lambda x: f"Niveau {x}"
+        )
+        
+        if nivel_filter:
+            filtered_suggestions = suggestions_display[suggestions_display['Niveau'].isin(nivel_filter)]
+            st.dataframe(filtered_suggestions, use_container_width=True)
+        
+        # Statistiques détaillées
+        with st.expander("📊 Statistiques détaillées"):
+            if metadata['generate_questions']:
+                st.markdown(f"**Questions éliminées:** {len(results['all_questions_data']) - len(results['final_consolidated_data'])}")
+                st.markdown(f"**Questions conservées:** {len(results['final_consolidated_data'])}")
+            
+            st.markdown("**Répartition des suggestions par niveau:**")
+            for level, count in results['level_counts'].items():
+                st.markdown(f"- Niveau {level}: {count} suggestions")
+            
+            # Répartition par mot-clé
+            keyword_counts = suggestions_df['Mot-clé'].value_counts()
+            st.markdown("**Répartition par mot-clé:**")
+            for keyword, count in keyword_counts.items():
+                st.markdown(f"- {keyword}: {count} suggestions")
+        
+        # Export des résultats
+        st.markdown("### 📤 Export des résultats")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if metadata['generate_questions'] and len(results['final_consolidated_data']) > 0:
+                # Export Excel des questions
+                excel_file = create_excel_file(df_display)
+                st.download_button(
+                    label="📊 Télécharger Questions (Excel)",
+                    data=excel_file,
+                    file_name="questions_conversationnelles_multiniveaux.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="download_questions_excel"
+                )
+            
+            # Export Excel des suggestions
+            suggestions_excel = create_excel_file(suggestions_display)
+            st.download_button(
+                label="🔍 Télécharger Suggestions (Excel)",
+                data=suggestions_excel,
+                file_name="suggestions_google_multiniveaux.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="download_suggestions_excel"
+            )
+        
+        with col2:
+            # Export JSON complet
+            export_json = {
+                "metadata": {
+                    **metadata,
+                    "total_suggestions": len(results['all_suggestions']),
+                    "level_distribution": results['level_counts']
+                },
+                "suggestions": results['all_suggestions'],
+                "questions": results['final_consolidated_data'] if metadata['generate_questions'] else []
+            }
+            
+            json_data = json.dumps(export_json, ensure_ascii=False, indent=2)
+            st.download_button(
+                label="📋 Télécharger Données (JSON)",
+                data=json_data,
+                file_name="analyse_complete_multiniveaux.json",
+                mime="application/json",
+                key="download_json"
+            )
 
 # TAB 2: Instructions d'utilisation
 with tab2:
