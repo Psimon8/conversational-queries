@@ -282,14 +282,14 @@ with tab1:
     with col2:
         enable_level2 = st.checkbox(
             "Activer niveau 2",
-            value=True,
+            value=False,  # Changé de True à False
             help="Rechercher des suggestions à partir des suggestions de niveau 1"
         )
         level2_count = st.slider(
             "Suggestions niveau 2", 
-            min_value=2, 
+            min_value=0,  # Changé de 2 à 0
             max_value=15, 
-            value=5,
+            value=10,  # Changé de 5 à 10
             disabled=not enable_level2,
             help="Nombre de suggestions pour chaque suggestion de niveau 1"
         )
