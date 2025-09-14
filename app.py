@@ -28,7 +28,7 @@ if 'analysis_metadata' not in st.session_state:
 st.title("🔍 Optimiseur de Requêtes Conversationnelles SEO")
 st.subheader("Analyse basée sur les suggestions Google pour l'optimisation SEO")
 
-# Configuration de l'API OpenAI
+# Configuration dans la sidebar
 st.sidebar.header("⚙️ Configuration")
 api_key = st.sidebar.text_input("Clé API OpenAI", type="password", help="Votre clé API OpenAI pour GPT-4o mini")
 
@@ -38,6 +38,30 @@ if api_key:
 else:
     st.sidebar.warning("⚠️ Veuillez entrer votre clé API OpenAI")
     client = None
+
+# Options de génération dans la sidebar
+st.sidebar.header("🎯 Options d'analyse")
+generate_questions = st.sidebar.checkbox(
+    "Générer questions conversationnelles",
+    value=True,
+    help="Générer des questions conversationnelles à partir des suggestions"
+)
+
+if generate_questions:
+    final_questions_count = st.sidebar.slider(
+        "Nombre de questions finales",
+        min_value=5,
+        max_value=100,
+        value=20,
+        help="Nombre de questions conversationnelles à conserver après consolidation"
+    )
+
+lang = st.sidebar.selectbox(
+    "Langue", 
+    ["fr", "en", "es", "de", "it"], 
+    index=0,
+    help="Langue pour les suggestions Google"
+)
 
 # Fonctions utilitaires communes
 def call_gpt4o_mini(prompt, max_retries=3):
@@ -200,12 +224,13 @@ def create_excel_file(df):
     output.seek(0)
     return output
 
-def get_google_suggestions_multilevel(keyword, lang='fr', level1_count=10, level2_count=5, enable_level2=True):
+def get_google_suggestions_multilevel(keyword, lang='fr', level1_count=10, level2_count=5, level3_count=0, enable_level2=True, enable_level3=False):
     """
     Récupère les suggestions Google à plusieurs niveaux
     - Niveau 0: mot-clé de base
     - Niveau 1: suggestions directes du mot-clé (2-15)
-    - Niveau 2: suggestions des suggestions de niveau 1 (2-15)
+    - Niveau 2: suggestions des suggestions de niveau 1 (0-15)
+    - Niveau 3: suggestions des suggestions de niveau 2 (0-15)
     """
     all_suggestions = []
     processed_suggestions = set()  # Pour éviter les doublons
@@ -235,6 +260,7 @@ def get_google_suggestions_multilevel(keyword, lang='fr', level1_count=10, level
     
     # Niveau 2: Suggestions des suggestions (si activé)
     if enable_level2:
+        level2_parents = []
         for suggestion_data in all_suggestions.copy():  # Copie pour éviter la modification pendant l'itération
             if suggestion_data['Niveau'] == 1:  # Traiter uniquement les suggestions de niveau 1
                 level2_suggestions = get_google_suggestions(suggestion_data['Suggestion Google'], lang, level2_count)
@@ -242,10 +268,30 @@ def get_google_suggestions_multilevel(keyword, lang='fr', level1_count=10, level
                 for l2_suggestion in level2_suggestions:
                     normalized = l2_suggestion.lower().strip()
                     if normalized not in processed_suggestions:
-                        all_suggestions.append({
+                        new_suggestion = {
                             'Mot-clé': keyword,
                             'Niveau': 2,
                             'Suggestion Google': l2_suggestion,
+                            'Parent': suggestion_data['Suggestion Google']
+                        }
+                        all_suggestions.append(new_suggestion)
+                        level2_parents.append(new_suggestion)
+                        processed_suggestions.add(normalized)
+                
+                time.sleep(0.3)  # Délai entre les requêtes pour éviter le rate limiting
+        
+        # Niveau 3: Suggestions des suggestions de niveau 2 (si activé)
+        if enable_level3:
+            for suggestion_data in level2_parents:  # Traiter uniquement les suggestions de niveau 2
+                level3_suggestions = get_google_suggestions(suggestion_data['Suggestion Google'], lang, level3_count)
+                
+                for l3_suggestion in level3_suggestions:
+                    normalized = l3_suggestion.lower().strip()
+                    if normalized not in processed_suggestions:
+                        all_suggestions.append({
+                            'Mot-clé': keyword,
+                            'Niveau': 3,
+                            'Suggestion Google': l3_suggestion,
                             'Parent': suggestion_data['Suggestion Google']
                         })
                         processed_suggestions.add(normalized)
@@ -269,8 +315,10 @@ with tab1:
         help="Entrez un ou plusieurs mots-clés, un par ligne"
     )
     
-    # Configuration améliorée
-    col1, col2, col3, col4 = st.columns(4)
+    # Configuration des niveaux de suggestions
+    st.markdown("#### 📊 Configuration des niveaux de suggestions")
+    col1, col2, col3 = st.columns(3)
+    
     with col1:
         level1_count = st.slider(
             "Suggestions niveau 1", 
@@ -279,6 +327,7 @@ with tab1:
             value=10,
             help="Nombre de suggestions Google directes pour chaque mot-clé"
         )
+    
     with col2:
         level2_count = st.slider(
             "Suggestions niveau 2", 
@@ -287,22 +336,15 @@ with tab1:
             value=10,
             help="Nombre de suggestions pour chaque suggestion de niveau 1 (0 = désactivé)"
         )
+    
     with col3:
-        generate_questions = st.checkbox(
-            "Générer questions conversationnelles",
-            value=True,
-            help="Générer des questions conversationnelles à partir des suggestions"
+        level3_count = st.slider(
+            "Suggestions niveau 3", 
+            min_value=0,
+            max_value=15, 
+            value=0,
+            help="Nombre de suggestions pour chaque suggestion de niveau 2 (0 = désactivé)"
         )
-        if generate_questions:
-            final_questions_count = st.slider(
-                "Nombre de questions finales",
-                min_value=5,
-                max_value=100,
-                value=20,
-                help="Nombre de questions conversationnelles à conserver après consolidation"
-            )
-    with col4:
-        lang = st.selectbox("Langue", ["fr", "en", "es", "de", "it"], index=0)
     
     # Boutons d'action
     col_analyze, col_clear = st.columns([4, 1])
@@ -326,8 +368,9 @@ with tab1:
                         progress_bar = st.progress(0)
                         status_text = st.empty()
                         
-                        # Déterminer si le niveau 2 est activé (si level2_count > 0)
+                        # Déterminer les niveaux activés
                         enable_level2 = level2_count > 0
+                        enable_level3 = level3_count > 0 and enable_level2
                         
                         # Étape 1: Collecte des suggestions multi-niveaux
                         total_steps = 3 if generate_questions else 2
@@ -341,7 +384,9 @@ with tab1:
                                 lang, 
                                 level1_count, 
                                 level2_count, 
-                                enable_level2
+                                level3_count,
+                                enable_level2,
+                                enable_level3
                             )
                             all_suggestions.extend(keyword_suggestions)
                             
@@ -357,7 +402,7 @@ with tab1:
                                 level = suggestion['Niveau']
                                 level_counts[level] = level_counts.get(level, 0) + 1
                             
-                            st.info(f"✅ {len(all_suggestions)} suggestions collectées - Niveau 0: {level_counts.get(0, 0)}, Niveau 1: {level_counts.get(1, 0)}, Niveau 2: {level_counts.get(2, 0)}")
+                            st.info(f"✅ {len(all_suggestions)} suggestions collectées - Niveau 0: {level_counts.get(0, 0)}, Niveau 1: {level_counts.get(1, 0)}, Niveau 2: {level_counts.get(2, 0)}, Niveau 3: {level_counts.get(3, 0)}")
                             
                             final_consolidated_data = []
                             all_questions_data = []
@@ -403,7 +448,7 @@ with tab1:
                                     
                                     processed += 1
                                     progress_bar.progress(40 + (processed * 40 // total_items))
-                                    time.sleep(0.5)  # Délai réduit
+                                    time.sleep(0.5)
                                     
                                     # Affichage du progrès en temps réel
                                     current_questions = len(all_questions_data)
@@ -438,7 +483,9 @@ with tab1:
                                 'keywords': keywords,
                                 'level1_count': level1_count,
                                 'level2_count': level2_count,
+                                'level3_count': level3_count,
                                 'enable_level2': enable_level2,
+                                'enable_level3': enable_level3,
                                 'generate_questions': generate_questions,
                                 'final_questions_count': final_questions_count if generate_questions else 0,
                                 'timestamp': time.strftime("%Y-%m-%d %H:%M:%S")
@@ -489,7 +536,8 @@ with tab1:
             with col2:
                 st.metric("Suggestions collectées", len(results['all_suggestions']))
             with col3:
-                st.metric("Niveaux activés", "2" if metadata['enable_level2'] else "1")
+                max_level = 3 if metadata['enable_level3'] else (2 if metadata['enable_level2'] else 1)
+                st.metric("Niveaux activés", str(max_level))
         
         # Tableau des suggestions par niveau
         st.markdown("### 🔍 Suggestions collectées par niveau")
@@ -670,5 +718,4 @@ with tab2:
 
 # Footer
 st.markdown("---")
-st.markdown("*Outil d'optimisation SEO pour requêtes conversationnelles | Powered by GPT-4o mini & Streamlit*")
 st.markdown("*Outil d'optimisation SEO pour requêtes conversationnelles | Powered by GPT-4o mini & Streamlit*")
