@@ -300,6 +300,223 @@ def get_google_suggestions_multilevel(keyword, lang='fr', level1_count=10, level
     
     return all_suggestions
 
+def analyze_suggestion_relevance(keyword, suggestion, level):
+    """Analyse la pertinence d'une suggestion par rapport au mot-clé principal"""
+    if not client:
+        return {"category": "unknown", "relevance_score": 0, "intent": "unknown"}
+    
+    prompt = f"""
+    Analyse la suggestion Google "{suggestion}" (niveau {level}) par rapport au mot-clé principal "{keyword}".
+    
+    Évalue selon ces critères :
+    1. PERTINENCE (0-10) : À quel point la suggestion est-elle liée au mot-clé principal ?
+    2. CATÉGORIE : Classe la suggestion dans une de ces catégories :
+       - "core" : Directement lié au mot-clé principal
+       - "related" : Lié mais avec une nuance différente
+       - "complementary" : Complémentaire ou service associé
+       - "geographic" : Variation géographique
+       - "temporal" : Variation temporelle (horaires, saisons...)
+       - "competitive" : Comparaison ou alternative
+       - "informational" : Recherche d'information
+       - "transactional" : Intention d'achat/réservation
+       - "navigational" : Recherche d'un lieu/site spécifique
+    
+    3. INTENTION : Détermine l'intention de recherche :
+       - "informational" : Cherche de l'information
+       - "navigational" : Cherche à aller quelque part
+       - "transactional" : Veut acheter/réserver
+       - "local" : Recherche locale
+    
+    Réponds UNIQUEMENT au format JSON :
+    {{"relevance_score": X, "category": "xxx", "intent": "xxx", "justification": "courte explication"}}
+    """
+    
+    try:
+        response = call_gpt4o_mini(prompt)
+        if response:
+            # Nettoyer la réponse pour extraire le JSON
+            response_clean = response.strip()
+            if response_clean.startswith('```json'):
+                response_clean = response_clean[7:-3]
+            elif response_clean.startswith('```'):
+                response_clean = response_clean[3:-3]
+            
+            return json.loads(response_clean)
+    except Exception as e:
+        st.warning(f"Erreur analyse suggestion '{suggestion}': {str(e)}")
+    
+    # Fallback basique si l'analyse GPT échoue
+    return {
+        "relevance_score": 5, 
+        "category": "related", 
+        "intent": "informational",
+        "justification": "Analyse automatique indisponible"
+    }
+
+def generate_contextual_questions(keyword, suggestion, analysis_data, num_questions=3):
+    """Génère des questions conversationnelles contextuelles basées sur l'analyse"""
+    if not client:
+        return []
+    
+    category = analysis_data.get('category', 'related')
+    intent = analysis_data.get('intent', 'informational')
+    relevance = analysis_data.get('relevance_score', 5)
+    
+    # Adapter le prompt selon la catégorie et l'intention
+    context_prompts = {
+        "core": "questions directement liées au cœur du sujet",
+        "related": "questions sur les aspects connexes",
+        "complementary": "questions sur les services/produits complémentaires",
+        "geographic": "questions géolocalisées",
+        "temporal": "questions temporelles (quand, horaires, saisons)",
+        "competitive": "questions de comparaison",
+        "informational": "questions d'information pratique",
+        "transactional": "questions d'achat/réservation",
+        "navigational": "questions de localisation/accès"
+    }
+    
+    intent_focus = {
+        "informational": "Concentre-toi sur des questions 'comment', 'pourquoi', 'qu'est-ce que'",
+        "navigational": "Concentre-toi sur des questions 'où', 'comment accéder', 'comment trouver'",
+        "transactional": "Concentre-toi sur des questions 'combien', 'comment acheter/réserver', 'quelles options'",
+        "local": "Concentre-toi sur des questions géolocalisées 'près de moi', 'dans ma région'"
+    }
+    
+    prompt = f"""
+    Mot-clé principal : "{keyword}"
+    Suggestion analysée : "{suggestion}"
+    Catégorie : {category} ({context_prompts.get(category, 'questions générales')})
+    Intention : {intent} ({intent_focus.get(intent, 'questions générales')})
+    Score de pertinence : {relevance}/10
+    
+    Génère EXACTEMENT {num_questions} questions conversationnelles SEO optimisées qui :
+    1. Sont adaptées à la catégorie "{category}" et l'intention "{intent}"
+    2. Intègrent naturellement le contexte de la suggestion
+    3. Sont formulées comme des questions que les utilisateurs poseraient vraiment
+    4. Sont optimisées pour la recherche vocale
+    5. Se terminent par un point d'interrogation
+    6. Sont de longueur appropriée (ni trop courtes, ni trop longues)
+    
+    Exemples de formulations selon l'intention :
+    - Informational : "Comment...", "Pourquoi...", "Qu'est-ce que..."
+    - Transactional : "Combien coûte...", "Où acheter...", "Comment réserver..."
+    - Local : "Où trouver... près de moi", "Quel est le meilleur... dans ma ville"
+    
+    Présente les questions sous forme de liste numérotée de 1 à {num_questions}.
+    """
+    
+    response = call_gpt4o_mini(prompt)
+    if response:
+        return extract_questions_from_response(response)
+    return []
+
+def smart_question_generation(all_suggestions_with_analysis, target_questions):
+    """Génère intelligemment les questions en fonction de l'analyse des suggestions"""
+    if not all_suggestions_with_analysis:
+        return []
+    
+    # Trier les suggestions par pertinence décroissante
+    sorted_suggestions = sorted(
+        all_suggestions_with_analysis, 
+        key=lambda x: x.get('analysis', {}).get('relevance_score', 0), 
+        reverse=True
+    )
+    
+    # Grouper par catégorie et intention pour équilibrer
+    categories = {}
+    for suggestion in sorted_suggestions:
+        analysis = suggestion.get('analysis', {})
+        category = analysis.get('category', 'unknown')
+        
+        if category not in categories:
+            categories[category] = []
+        categories[category].append(suggestion)
+    
+    # Calculer la distribution des questions par catégorie
+    total_suggestions = len(sorted_suggestions)
+    questions_per_suggestion = max(1, target_questions // total_suggestions)
+    
+    all_generated_questions = []
+    questions_generated = 0
+    
+    # Prioriser les catégories les plus pertinentes
+    priority_categories = ['core', 'transactional', 'informational', 'related', 'complementary']
+    
+    for category in priority_categories:
+        if category in categories and questions_generated < target_questions:
+            category_suggestions = categories[category][:3]  # Max 3 suggestions par catégorie
+            
+            for suggestion_data in category_suggestions:
+                if questions_generated >= target_questions:
+                    break
+                
+                # Calculer le nombre de questions pour cette suggestion
+                remaining_questions = target_questions - questions_generated
+                analysis = suggestion_data.get('analysis', {})
+                relevance = analysis.get('relevance_score', 5)
+                
+                # Plus la suggestion est pertinente, plus on génère de questions
+                if relevance >= 8:
+                    num_questions = min(5, remaining_questions)
+                elif relevance >= 6:
+                    num_questions = min(3, remaining_questions)
+                else:
+                    num_questions = min(2, remaining_questions)
+                
+                if num_questions > 0:
+                    questions = generate_contextual_questions(
+                        suggestion_data['Mot-clé'],
+                        suggestion_data['Suggestion Google'],
+                        analysis,
+                        num_questions
+                    )
+                    
+                    for question in questions:
+                        if questions_generated < target_questions:
+                            all_generated_questions.append({
+                                'Mot-clé': suggestion_data['Mot-clé'],
+                                'Suggestion Google': suggestion_data['Suggestion Google'],
+                                'Question Conversationnelle': question,
+                                'Niveau': suggestion_data['Niveau'],
+                                'Parent': suggestion_data['Parent'],
+                                'Catégorie': category,
+                                'Intention': analysis.get('intent', 'unknown'),
+                                'Score_Pertinence': relevance
+                            })
+                            questions_generated += 1
+    
+    # Compléter avec les catégories restantes si nécessaire
+    for category, suggestions in categories.items():
+        if category not in priority_categories and questions_generated < target_questions:
+            for suggestion_data in suggestions:
+                if questions_generated >= target_questions:
+                    break
+                
+                remaining_questions = target_questions - questions_generated
+                questions = generate_contextual_questions(
+                    suggestion_data['Mot-clé'],
+                    suggestion_data['Suggestion Google'],
+                    suggestion_data.get('analysis', {}),
+                    min(2, remaining_questions)
+                )
+                
+                for question in questions:
+                    if questions_generated < target_questions:
+                        analysis = suggestion_data.get('analysis', {})
+                        all_generated_questions.append({
+                            'Mot-clé': suggestion_data['Mot-clé'],
+                            'Suggestion Google': suggestion_data['Suggestion Google'],
+                            'Question Conversationnelle': question,
+                            'Niveau': suggestion_data['Niveau'],
+                            'Parent': suggestion_data['Parent'],
+                            'Catégorie': category,
+                            'Intention': analysis.get('intent', 'unknown'),
+                            'Score_Pertinence': analysis.get('relevance_score', 5)
+                        })
+                        questions_generated += 1
+    
+    return all_generated_questions
+
 # Création des onglets
 tab1, tab2 = st.tabs(["🔍 Analyseur de Requêtes", "📖 Instructions"])
 
@@ -520,60 +737,51 @@ with tab1:
             with col4:
                 st.metric("Questions finales", len(results['final_consolidated_data']))
             with col5:
-                consolidation_rate = (len(results['all_questions_data']) - len(results['final_consolidated_data'])) / len(results['all_questions_data']) * 100 if results['all_questions_data'] else 0
-                st.metric("Taux consolidation", f"{consolidation_rate:.0f}%")
+                avg_score = sum(q.get('Score_Pertinence', 0) for q in results['final_consolidated_data']) / len(results['final_consolidated_data']) if results['final_consolidated_data'] else 0
+                st.metric("Score moyen", f"{avg_score:.1f}/10")
             
-            # Tableau des résultats avec questions
-            st.markdown("### 📋 Questions conversationnelles (par pertinence)")
-            df_results = pd.DataFrame(results['final_consolidated_data'])
-            df_display = df_results[['Requêtes Conversationnelles', 'Suggestion', 'Mot-clé']].copy()
-            st.dataframe(df_display, use_container_width=True)
-        else:
-            # Métriques sans questions
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Mots-clés analysés", len(metadata['keywords']))
-            with col2:
-                st.metric("Suggestions collectées", len(results['all_suggestions']))
-            with col3:
-                max_level = 3 if metadata['enable_level3'] else (2 if metadata['enable_level2'] else 1)
-                st.metric("Niveaux activés", str(max_level))
+            # Tableau des résultats avec questions amélioré
+            st.markdown("### 📋 Questions conversationnelles générées intelligemment")
+            if len(results['final_consolidated_data']) > 0:
+                df_results = pd.DataFrame(results['final_consolidated_data'])
+                df_display = df_results[['Question Conversationnelle', 'Catégorie', 'Intention', 'Score_Pertinence', 'Suggestion Google', 'Mot-clé']].copy()
+                df_display.columns = ['Questions Conversationnelles', 'Catégorie', 'Intention', 'Score', 'Suggestion', 'Mot-clé']
+                st.dataframe(df_display, use_container_width=True)
+                
+                # Statistiques par catégorie
+                with st.expander("📊 Répartition par catégorie et intention"):
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.markdown("**Répartition par catégorie:**")
+                        category_counts = df_results['Catégorie'].value_counts()
+                        for category, count in category_counts.items():
+                            st.markdown(f"- {category}: {count} questions")
+                    
+                    with col2:
+                        st.markdown("**Répartition par intention:**")
+                        intent_counts = df_results['Intention'].value_counts()
+                        for intent, count in intent_counts.items():
+                            st.markdown(f"- {intent}: {count} questions")
         
-        # Tableau des suggestions par niveau
-        st.markdown("### 🔍 Suggestions collectées par niveau")
-        
-        # Créer un DataFrame pour les suggestions
-        suggestions_df = pd.DataFrame(results['all_suggestions'])
-        suggestions_display = suggestions_df[['Mot-clé', 'Suggestion Google', 'Niveau', 'Parent']].copy()
-        
-        # Filtres par niveau
-        available_levels = suggestions_df['Niveau'].unique().tolist()
-        nivel_filter = st.multiselect(
-            "Filtrer par niveau",
-            options=available_levels,
-            default=available_levels,
-            format_func=lambda x: f"Niveau {x}"
-        )
-        
-        if nivel_filter:
-            filtered_suggestions = suggestions_display[suggestions_display['Niveau'].isin(nivel_filter)]
-            st.dataframe(filtered_suggestions, use_container_width=True)
-        
-        # Statistiques détaillées
-        with st.expander("📊 Statistiques détaillées"):
-            if metadata['generate_questions']:
-                st.markdown(f"**Questions éliminées:** {len(results['all_questions_data']) - len(results['final_consolidated_data'])}")
-                st.markdown(f"**Questions conservées:** {len(results['final_consolidated_data'])}")
+        # Tableau des suggestions avec analyse
+        if metadata.get('generate_questions') and len(results.get('all_suggestions_with_analysis', [])) > 0:
+            st.markdown("### 🔍 Suggestions analysées")
             
-            st.markdown("**Répartition des suggestions par niveau:**")
-            for level, count in results['level_counts'].items():
-                st.markdown(f"- Niveau {level}: {count} suggestions")
+            suggestions_analyzed_df = pd.DataFrame(results['all_suggestions_with_analysis'])
             
-            # Répartition par mot-clé
-            keyword_counts = suggestions_df['Mot-clé'].value_counts()
-            st.markdown("**Répartition par mot-clé:**")
-            for keyword, count in keyword_counts.items():
-                st.markdown(f"- {keyword}: {count} suggestions")
+            # Extraire les données d'analyse
+            for idx, row in suggestions_analyzed_df.iterrows():
+                analysis = row.get('analysis', {})
+                suggestions_analyzed_df.at[idx, 'Score_Pertinence'] = analysis.get('relevance_score', 0)
+                suggestions_analyzed_df.at[idx, 'Catégorie'] = analysis.get('category', 'unknown')
+                suggestions_analyzed_df.at[idx, 'Intention'] = analysis.get('intent', 'unknown')
+                suggestions_analyzed_df.at[idx, 'Justification'] = analysis.get('justification', '')
+            
+            display_cols = ['Mot-clé', 'Suggestion Google', 'Niveau', 'Score_Pertinence', 'Catégorie', 'Intention', 'Justification']
+            filtered_df = suggestions_analyzed_df[display_cols].copy()
+            
+            st.dataframe(filtered_df, use_container_width=True)
         
         # Export des résultats
         st.markdown("### 📤 Export des résultats")
@@ -582,14 +790,18 @@ with tab1:
         
         with col1:
             if metadata['generate_questions'] and len(results['final_consolidated_data']) > 0:
-                # Export Excel des questions
-                excel_file = create_excel_file(df_display)
+                # Export Excel des questions avec métadonnées enrichies
+                excel_df = pd.DataFrame(results['final_consolidated_data'])
+                excel_display = excel_df[['Question Conversationnelle', 'Suggestion Google', 'Mot-clé', 'Catégorie', 'Intention', 'Score_Pertinence']].copy()
+                excel_display.columns = ['Questions Conversationnelles', 'Suggestion', 'Mot-clé', 'Catégorie', 'Intention', 'Score']
+                
+                excel_file = create_excel_file(excel_display)
                 st.download_button(
-                    label="📊 Télécharger Questions (Excel)",
+                    label="📊 Télécharger Questions Analysées (Excel)",
                     data=excel_file,
-                    file_name="questions_conversationnelles_multiniveaux.xlsx",
+                    file_name="questions_conversationnelles_analysees.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="download_questions_excel"
+                    key="download_questions_analyzed_excel"
                 )
             
             # Export Excel des suggestions
