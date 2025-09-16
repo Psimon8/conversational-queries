@@ -793,156 +793,159 @@ with tab1:
                         st.session_state.analysis_results = None
                         st.session_state.analysis_metadata = None
                         
-                        # Progress tracking
-                        progress_bar = st.progress(0)
-                        status_text = st.empty()
-                        
-                        # Déterminer les niveaux activés
-                        enable_level2 = level2_count > 0
-                        enable_level3 = level3_count > 0 and enable_level2
-                        
-                        # Étape 1: Collecte des suggestions multi-niveaux
-                        total_steps = 3 if generate_questions else 2
-                        status_text.text("⏳ Étape 1/{}: Collecte des suggestions Google multi-niveaux...".format(total_steps))
-                        
-                        all_suggestions = []
-                        
-                        for i, keyword in enumerate(keywords):
-                            keyword_suggestions = get_google_suggestions_multilevel(
-                                keyword, 
-                                lang, 
-                                level1_count, 
-                                level2_count, 
-                                level3_count,
-                                enable_level2,
-                                enable_level3
-                            )
-                            all_suggestions.extend(keyword_suggestions)
+                        try:
+                            # Progress tracking
+                            progress_bar = st.progress(0)
+                            status_text = st.empty()
                             
-                            progress_bar.progress((i + 1) * 40 // len(keywords))
-                            status_text.text(f"⏳ Collecte en cours... {len(all_suggestions)} suggestions trouvées")
-                        
-                        if not all_suggestions:
-                            st.error("❌ Aucune suggestion trouvée")
-                        else:
-                            # Affichage des statistiques de collecte
-                            level_counts = {}
-                            for suggestion in all_suggestions:
-                                level = suggestion['Niveau']
-                                level_counts[level] = level_counts.get(level, 0) + 1
+                            # Déterminer les niveaux activés
+                            enable_level2 = level2_count > 0
+                            enable_level3 = level3_count > 0 and enable_level2
                             
-                            st.info(f"✅ {len(all_suggestions)} suggestions collectées - Niveau 0: {level_counts.get(0, 0)}, Niveau 1: {level_counts.get(1, 0)}, Niveau 2: {level_counts.get(2, 0)}, Niveau 3: {level_counts.get(3, 0)}")
+                            # Étape 1: Collecte des suggestions multi-niveaux
+                            total_steps = 3 if generate_questions else 2
+                            status_text.text("⏳ Étape 1/{}: Collecte des suggestions Google multi-niveaux...".format(total_steps))
                             
-                            final_consolidated_data = []
-                            all_questions_data = []
+                            all_suggestions = []
                             
-                            if generate_questions:
-                                # Étape 2: Analyse des thèmes récurrents
-                                status_text.text("⏳ Étape 2/4: Analyse des thèmes récurrents dans les suggestions...")
-                                progress_bar.progress(50)
+                            for i, keyword in enumerate(keywords):
+                                keyword_suggestions = get_google_suggestions_multilevel(
+                                    keyword, 
+                                    lang, 
+                                    level1_count, 
+                                    level2_count, 
+                                    level3_count,
+                                    enable_level2,
+                                    enable_level3
+                                )
+                                all_suggestions.extend(keyword_suggestions)
                                 
-                                # Analyser les thèmes pour chaque mot-clé
-                                all_themes = {}
-                                for keyword in keywords:
-                                    keyword_suggestions = [s for s in all_suggestions if s['Mot-clé'] == keyword]
-                                    themes = analyze_suggestions_themes(keyword_suggestions, keyword)
-                                    all_themes[keyword] = themes
-                                    time.sleep(1)  # Délai pour éviter le rate limiting
+                                progress_bar.progress((i + 1) * 40 // len(keywords))
+                                status_text.text(f"⏳ Collecte en cours... {len(all_suggestions)} suggestions trouvées")
+                            
+                            if not all_suggestions:
+                                st.error("❌ Aucune suggestion trouvée")
+                            else:
+                                # Affichage des statistiques de collecte
+                                level_counts = {}
+                                for suggestion in all_suggestions:
+                                    level = suggestion['Niveau']
+                                    level_counts[level] = level_counts.get(level, 0) + 1
                                 
-                                # Étape 3: Génération intelligente des questions
-                                status_text.text("⏳ Étape 3/4: Génération des questions conversationnelles par thème...")
-                                progress_bar.progress(70)
+                                st.info(f"✅ {len(all_suggestions)} suggestions collectées - Niveau 0: {level_counts.get(0, 0)}, Niveau 1: {level_counts.get(1, 0)}, Niveau 2: {level_counts.get(2, 0)}, Niveau 3: {level_counts.get(3, 0)}")
                                 
+                                final_consolidated_data = []
                                 all_questions_data = []
-                                questions_per_keyword = final_questions_count // len(keywords)
-                                remaining_questions = final_questions_count
+                                all_themes = {}
                                 
-                                for i, keyword in enumerate(keywords):
-                                    # Calculer le nombre de questions pour ce mot-clé
-                                    if i == len(keywords) - 1:  # Dernier mot-clé
-                                        keyword_questions = remaining_questions
-                                    else:
-                                        keyword_questions = min(questions_per_keyword, remaining_questions)
+                                if generate_questions:
+                                    # Étape 2: Analyse des thèmes récurrents
+                                    status_text.text("⏳ Étape 2/4: Analyse des thèmes récurrents dans les suggestions...")
+                                    progress_bar.progress(50)
                                     
-                                    if keyword_questions > 0:
-                                        themes = all_themes.get(keyword, [])
-                                        if themes:
-                                            keyword_questions_list = generate_questions_from_themes(
-                                                keyword, 
-                                                themes, 
-                                                keyword_questions
-                                            )
-                                            
-                                            for q in keyword_questions_list:
-                                                q['Mot-clé'] = keyword
-                                                all_questions_data.append(q)
-                                            
-                                            remaining_questions -= len(keyword_questions_list)
+                                    # Analyser les thèmes pour chaque mot-clé
+                                    for keyword in keywords:
+                                        keyword_suggestions = [s for s in all_suggestions if s['Mot-clé'] == keyword]
+                                        themes = analyze_suggestions_themes(keyword_suggestions, keyword)
+                                        all_themes[keyword] = themes
+                                        time.sleep(1)  # Délai pour éviter le rate limiting
+                                    
+                                    # Étape 3: Génération intelligente des questions
+                                    status_text.text("⏳ Étape 3/4: Génération des questions conversationnelles par thème...")
+                                    progress_bar.progress(70)
+                                    
+                                    all_questions_data = []
+                                    questions_per_keyword = final_questions_count // len(keywords)
+                                    remaining_questions = final_questions_count
+                                    
+                                    for i, keyword in enumerate(keywords):
+                                        # Calculer le nombre de questions pour ce mot-clé
+                                        if i == len(keywords) - 1:  # Dernier mot-clé
+                                            keyword_questions = remaining_questions
                                         else:
-                                            st.warning(f"Aucun thème identifié pour '{keyword}'")
+                                            keyword_questions = min(questions_per_keyword, remaining_questions)
+                                        
+                                        if keyword_questions > 0:
+                                            themes = all_themes.get(keyword, [])
+                                            if themes:
+                                                keyword_questions_list = generate_questions_from_themes(
+                                                    keyword, 
+                                                    themes, 
+                                                    keyword_questions
+                                                )
+                                                
+                                                for q in keyword_questions_list:
+                                                    q['Mot-clé'] = keyword
+                                                    all_questions_data.append(q)
+                                                
+                                                remaining_questions -= len(keyword_questions_list)
+                                            else:
+                                                st.warning(f"Aucun thème identifié pour '{keyword}'")
+                                        
+                                        time.sleep(0.5)  # Délai entre les mots-clés
                                     
-                                    time.sleep(0.5)  # Délai entre les mots-clés
-                                
-                                if not all_questions_data:
-                                    st.error("❌ Aucune question générée")
-                                else:
-                                    st.info(f"✅ {len(all_questions_data)} questions conversationnelles générées à partir des thèmes")
-                                    
-                                    # Étape 4: Finalisation
-                                    status_text.text("⏳ Étape 4/4: Finalisation...")
-                                    progress_bar.progress(90)
-                                    
-                                    # Trier par score d'importance et limiter au nombre demandé
-                                    sorted_questions = sorted(
-                                        all_questions_data,
-                                        key=lambda x: x.get('Score_Importance', 0),
-                                        reverse=True
-                                    )
-                                    
-                                    final_consolidated_data = sorted_questions[:final_questions_count]
-                                    
-                                    # Sauvegarder les thèmes pour l'affichage
-                                    st.session_state.themes_analysis = all_themes
+                                    if not all_questions_data:
+                                        st.error("❌ Aucune question générée")
+                                    else:
+                                        st.info(f"✅ {len(all_questions_data)} questions conversationnelles générées à partir des thèmes")
+                                        
+                                        # Étape 4: Finalisation
+                                        status_text.text("⏳ Étape 4/4: Finalisation...")
+                                        progress_bar.progress(90)
+                                        
+                                        # Trier par score d'importance et limiter au nombre demandé
+                                        sorted_questions = sorted(
+                                            all_questions_data,
+                                            key=lambda x: x.get('Score_Importance', 0),
+                                            reverse=True
+                                        )
+                                        
+                                        final_consolidated_data = sorted_questions[:final_questions_count]
 
-                            progress_bar.progress(100)
-                            status_text.text("✅ Analyse terminée !")
-                            
-                            # Sauvegarder les résultats dans le session state
-                            st.session_state.analysis_results = {
-                                'all_suggestions': all_suggestions,
-                                'all_questions_data': all_questions_data if generate_questions else [],
-                                'final_consolidated_data': final_consolidated_data if generate_questions else [],
-                                'level_counts': level_counts,
-                                'themes_analysis': all_themes if generate_questions else {}
-                            }
-                            
-                            st.session_state.analysis_metadata = {
-                                'keywords': keywords,
-                                'level1_count': level1_count,
-                                'level2_count': level2_count,
-                                'level3_count': level3_count,
-                                'enable_level2': enable_level2,
-                                'enable_level3': enable_level3,
-                                'generate_questions': generate_questions,
-                                'final_questions_count': final_questions_count if generate_questions else 0,
-                                'timestamp': time.strftime("%Y-%m-%d %H:%M:%S")
-                            }
-                            
-                            # Tracking de succès
-                            query_id = analytics.track_query(
-                                keywords, 
-                                analysis_config, 
-                                st.session_state.analysis_results,
-                                processing_time
-                            )
-                            st.session_state.current_query_id = query_id
-                            
-                            analytics.track_event("analysis_completed", {
-                                'processing_time': processing_time,
-                                'suggestions_found': len(all_suggestions),
-                                'questions_generated': len(final_consolidated_data) if generate_questions else 0
-                            })
-                            
+                                progress_bar.progress(100)
+                                status_text.text("✅ Analyse terminée !")
+                                
+                                # Sauvegarder les résultats dans le session state
+                                st.session_state.analysis_results = {
+                                    'all_suggestions': all_suggestions,
+                                    'all_questions_data': all_questions_data if generate_questions else [],
+                                    'final_consolidated_data': final_consolidated_data if generate_questions else [],
+                                    'level_counts': level_counts,
+                                    'themes_analysis': all_themes if generate_questions else {}
+                                }
+                                
+                                st.session_state.analysis_metadata = {
+                                    'keywords': keywords,
+                                    'level1_count': level1_count,
+                                    'level2_count': level2_count,
+                                    'level3_count': level3_count,
+                                    'enable_level2': enable_level2,
+                                    'enable_level3': enable_level3,
+                                    'generate_questions': generate_questions,
+                                    'final_questions_count': final_questions_count if generate_questions else 0,
+                                    'timestamp': time.strftime("%Y-%m-%d %H:%M:%S")
+                                }
+                                
+                                # Tracking de succès
+                                processing_time = time.time() - start_time
+                                query_id = analytics.track_query(
+                                    keywords, 
+                                    analysis_config, 
+                                    st.session_state.analysis_results,
+                                    processing_time
+                                )
+                                st.session_state.current_query_id = query_id
+                                
+                                analytics.track_event("analysis_completed", {
+                                    'processing_time': processing_time,
+                                    'suggestions_found': len(all_suggestions),
+                                    'questions_generated': len(final_consolidated_data) if generate_questions else 0
+                                })
+                                
+                                # Nettoyer les éléments temporaires
+                                progress_bar.empty()
+                                status_text.empty()
+                        
                         except Exception as e:
                             # Tracking d'erreur
                             processing_time = time.time() - start_time
@@ -955,11 +958,7 @@ with tab1:
                             )
                             analytics.track_event("analysis_error", {'error': str(e)})
                             st.error(f"❌ Erreur lors de l'analyse: {str(e)}")
-                        
-                        # Nettoyer les éléments temporaires
-                        progress_bar.empty()
-                        status_text.empty()
-    
+
     with col_clear:
         if st.button("🗑️ Effacer", help="Effacer les résultats actuels"):
             analytics.track_event("results_cleared")
@@ -1203,4 +1202,5 @@ st.markdown("*Outil d'optimisation SEO pour requêtes conversationnelles | Power
 
 # Tracking de fin de session au nettoyage
 if st.session_state.get('cleanup', False):
+    analytics.end_session()
     analytics.end_session()
