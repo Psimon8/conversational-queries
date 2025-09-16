@@ -732,7 +732,7 @@ with tab1:
             "Suggestions niveau 2", 
             min_value=0,
             max_value=15, 
-            value=10,
+            value=0,
             help="Nombre de suggestions pour chaque suggestion de niveau 1 (0 = désactivé)"
         )
     
