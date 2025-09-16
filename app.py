@@ -63,6 +63,64 @@ lang = st.sidebar.selectbox(
     help="Langue pour les suggestions Google"
 )
 
+# Export des résultats dans la sidebar
+if 'analysis_results' in st.session_state and st.session_state.analysis_results is not None:
+    results = st.session_state.analysis_results
+    metadata = st.session_state.analysis_metadata
+    
+    st.sidebar.header("📤 Export des résultats")
+    
+    if metadata['generate_questions'] and len(results['final_consolidated_data']) > 0:
+        # Export Excel des questions avec thèmes
+        excel_df = pd.DataFrame(results['final_consolidated_data'])
+        excel_display = excel_df[['Question Conversationnelle', 'Mot-clé', 'Thème', 'Intention', 'Score_Importance']].copy()
+        excel_display.columns = ['Questions Conversationnelles', 'Mot-clé', 'Thème', 'Intention', 'Importance']
+        
+        excel_file = create_excel_file(excel_display)
+        st.sidebar.download_button(
+            label="📊 Questions (Excel)",
+            data=excel_file,
+            file_name="questions_conversationnelles_themes.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="download_questions_themes_excel",
+            use_container_width=True
+        )
+    
+    # Export Excel des suggestions
+    if len(results['all_suggestions']) > 0:
+        suggestions_df = pd.DataFrame(results['all_suggestions'])
+        suggestions_display = suggestions_df[['Mot-clé', 'Suggestion Google', 'Niveau', 'Parent']].copy()
+        suggestions_excel = create_excel_file(suggestions_display)
+        st.sidebar.download_button(
+            label="🔍 Suggestions (Excel)",
+            data=suggestions_excel,
+            file_name="suggestions_google_multiniveaux.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="download_suggestions_excel",
+            use_container_width=True
+        )
+    
+    # Export JSON complet
+    export_json = {
+        "metadata": {
+            **metadata,
+            "total_suggestions": len(results['all_suggestions']),
+            "level_distribution": results['level_counts']
+        },
+        "suggestions": results['all_suggestions'],
+        "questions": results['final_consolidated_data'] if metadata['generate_questions'] else []
+    }
+    
+    json_data = json.dumps(export_json, ensure_ascii=False, indent=2)
+    st.sidebar.download_button(
+        label="📋 Données (JSON)",
+        data=json_data,
+        file_name="analyse_complete_multiniveaux.json",
+        mime="application/json",
+        key="download_json",
+        use_container_width=True
+    )
+
 # Fonctions utilitaires communes
 def call_gpt4o_mini(prompt, max_retries=3):
     """Appel à l'API GPT-4o mini avec gestion d'erreurs"""
@@ -878,44 +936,6 @@ with tab1:
             with col5:
                 avg_importance = sum(q.get('Score_Importance', 0) for q in results['final_consolidated_data']) / len(results['final_consolidated_data']) if results['final_consolidated_data'] else 0
                 st.metric("Importance moyenne", f"{avg_importance:.1f}/5")
-            
-            # Tableau des résultats avec questions amélioré
-            st.markdown("### 📋 Questions conversationnelles basées sur les thèmes")
-            if len(results['final_consolidated_data']) > 0:
-                df_results = pd.DataFrame(results['final_consolidated_data'])
-                df_display = df_results[['Question Conversationnelle', 'Thème', 'Intention', 'Score_Importance', 'Mot-clé']].copy()
-                df_display.columns = ['Questions Conversationnelles', 'Thème', 'Intention', 'Importance', 'Mot-clé']
-                st.dataframe(df_display, use_container_width=True)
-                
-                # Analyse des thèmes
-                with st.expander("📊 Analyse détaillée des thèmes"):
-                    themes_analysis = results.get('themes_analysis', {})
-                    
-                    for keyword, themes in themes_analysis.items():
-                        if themes:
-                            st.markdown(f"**Thèmes pour '{keyword}' :**")
-                            themes_df = pd.DataFrame(themes)
-                            if not themes_df.empty:
-                                display_themes = themes_df[['nom', 'importance', 'intention', 'concepts']].copy()
-                                display_themes.columns = ['Thème', 'Importance', 'Intention', 'Concepts']
-                                st.dataframe(display_themes, use_container_width=True)
-                                st.markdown("---")
-                
-                # Statistiques par thème et intention
-                with st.expander("📈 Répartition des questions"):
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.markdown("**Répartition par thème:**")
-                        theme_counts = df_results['Thème'].value_counts()
-                        for theme, count in theme_counts.items():
-                            st.markdown(f"- {theme}: {count} questions")
-                    
-                    with col2:
-                        st.markdown("**Répartition par intention:**")
-                        intent_counts = df_results['Intention'].value_counts()
-                        for intent, count in intent_counts.items():
-                            st.markdown(f"- {intent}: {count} questions")
         else:
             # Métriques sans questions
             col1, col2, col3 = st.columns(3)
@@ -947,6 +967,44 @@ with tab1:
             filtered_suggestions = suggestions_display[suggestions_display['Niveau'].isin(nivel_filter)]
             st.dataframe(filtered_suggestions, use_container_width=True)
         
+        # Tableau des questions conversationnelles (déplacé après les suggestions)
+        if metadata['generate_questions'] and len(results['final_consolidated_data']) > 0:
+            st.markdown("### 📋 Questions conversationnelles basées sur les thèmes")
+            df_results = pd.DataFrame(results['final_consolidated_data'])
+            df_display = df_results[['Question Conversationnelle', 'Thème', 'Intention', 'Score_Importance', 'Mot-clé']].copy()
+            df_display.columns = ['Questions Conversationnelles', 'Thème', 'Intention', 'Importance', 'Mot-clé']
+            st.dataframe(df_display, use_container_width=True)
+            
+            # Analyse des thèmes
+            with st.expander("📊 Analyse détaillée des thèmes"):
+                themes_analysis = results.get('themes_analysis', {})
+                
+                for keyword, themes in themes_analysis.items():
+                    if themes:
+                        st.markdown(f"**Thèmes pour '{keyword}' :**")
+                        themes_df = pd.DataFrame(themes)
+                        if not themes_df.empty:
+                            display_themes = themes_df[['nom', 'importance', 'intention', 'concepts']].copy()
+                            display_themes.columns = ['Thème', 'Importance', 'Intention', 'Concepts']
+                            st.dataframe(display_themes, use_container_width=True)
+                            st.markdown("---")
+            
+            # Statistiques par thème et intention
+            with st.expander("📈 Répartition des questions"):
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("**Répartition par thème:**")
+                    theme_counts = df_results['Thème'].value_counts()
+                    for theme, count in theme_counts.items():
+                        st.markdown(f"- {theme}: {count} questions")
+                
+                with col2:
+                    st.markdown("**Répartition par intention:**")
+                    intent_counts = df_results['Intention'].value_counts()
+                    for intent, count in intent_counts.items():
+                        st.markdown(f"- {intent}: {count} questions")
+        
         # Statistiques détaillées
         with st.expander("📊 Statistiques détaillées"):
             if metadata['generate_questions']:
@@ -963,59 +1021,6 @@ with tab1:
             st.markdown("**Répartition par mot-clé:**")
             for keyword, count in keyword_counts.items():
                 st.markdown(f"- {keyword}: {count} suggestions")
-        
-        # Export des résultats
-        st.markdown("### 📤 Export des résultats")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if metadata['generate_questions'] and len(results['final_consolidated_data']) > 0:
-                # Export Excel des questions avec thèmes
-                excel_df = pd.DataFrame(results['final_consolidated_data'])
-                excel_display = excel_df[['Question Conversationnelle', 'Mot-clé', 'Thème', 'Intention', 'Score_Importance']].copy()
-                excel_display.columns = ['Questions Conversationnelles', 'Mot-clé', 'Thème', 'Intention', 'Importance']
-                
-                excel_file = create_excel_file(excel_display)
-                st.download_button(
-                    label="📊 Télécharger Questions par Thèmes (Excel)",
-                    data=excel_file,
-                    file_name="questions_conversationnelles_themes.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="download_questions_themes_excel"
-                )
-            
-            # Export Excel des suggestions (correction ici)
-            if len(results['all_suggestions']) > 0:
-                suggestions_excel = create_excel_file(suggestions_display)
-                st.download_button(
-                    label="🔍 Télécharger Suggestions (Excel)",
-                    data=suggestions_excel,
-                    file_name="suggestions_google_multiniveaux.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="download_suggestions_excel"
-                )
-        
-        with col2:
-            # Export JSON complet
-            export_json = {
-                "metadata": {
-                    **metadata,
-                    "total_suggestions": len(results['all_suggestions']),
-                    "level_distribution": results['level_counts']
-                },
-                "suggestions": results['all_suggestions'],
-                "questions": results['final_consolidated_data'] if metadata['generate_questions'] else []
-            }
-            
-            json_data = json.dumps(export_json, ensure_ascii=False, indent=2)
-            st.download_button(
-                label="📋 Télécharger Données (JSON)",
-                data=json_data,
-                file_name="analyse_complete_multiniveaux.json",
-                mime="application/json",
-                key="download_json"
-            )
 
 # TAB 2: Instructions d'utilisation
 with tab2:
