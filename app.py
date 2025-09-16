@@ -517,6 +517,136 @@ def smart_question_generation(all_suggestions_with_analysis, target_questions):
     
     return all_generated_questions
 
+def analyze_suggestions_themes(all_suggestions, keyword):
+    """Analyse les suggestions pour identifier les thèmes récurrents"""
+    if not client or not all_suggestions:
+        return []
+    
+    # Créer une liste des suggestions sans doublons pour analyse
+    suggestions_text = []
+    for item in all_suggestions:
+        if item['Niveau'] > 0:  # Exclure le mot-clé de base
+            suggestions_text.append(item['Suggestion Google'])
+    
+    # Limiter à 50 suggestions max pour l'analyse
+    suggestions_sample = list(set(suggestions_text))[:50]
+    
+    if not suggestions_sample:
+        return []
+    
+    prompt = f"""
+    Analyse ces suggestions Google pour le mot-clé principal "{keyword}" et identifie les thèmes récurrents :
+    
+    Suggestions à analyser :
+    {chr(10).join([f"- {s}" for s in suggestions_sample])}
+    
+    Identifie les 5-10 THÈMES PRINCIPAUX qui ressortent de ces suggestions.
+    Pour chaque thème, indique :
+    1. Le nom du thème
+    2. Les mots-clés/concepts récurrents
+    3. L'intention de recherche dominante
+    4. Le niveau d'importance (1-5)
+    
+    Réponds UNIQUEMENT au format JSON :
+    {{
+        "themes": [
+            {{
+                "nom": "nom_du_theme",
+                "concepts": ["concept1", "concept2"],
+                "intention": "informational",
+                "importance": 4,
+                "exemples_suggestions": ["suggestion1", "suggestion2"]
+            }}
+        ]
+    }}
+    """
+    
+    try:
+        response = call_gpt4o_mini(prompt)
+        if response:
+            response_clean = response.strip()
+            if response_clean.startswith('```json'):
+                response_clean = response_clean[7:-3]
+            elif response_clean.startswith('```'):
+                response_clean = response_clean[3:-3]
+            
+            parsed = json.loads(response_clean)
+            return parsed.get('themes', [])
+    except Exception as e:
+        st.warning(f"Erreur analyse thèmes pour '{keyword}': {str(e)}")
+        return []
+
+def generate_questions_from_themes(keyword, themes, target_count):
+    """Génère des questions conversationnelles basées sur les thèmes identifiés"""
+    if not client or not themes or target_count <= 0:
+        return []
+    
+    # Trier les thèmes par importance
+    sorted_themes = sorted(themes, key=lambda x: x.get('importance', 0), reverse=True)
+    
+    # Calculer la répartition des questions par thème
+    questions_per_theme = max(1, target_count // len(sorted_themes))
+    remaining_questions = target_count
+    
+    all_questions = []
+    
+    for i, theme in enumerate(sorted_themes):
+        if remaining_questions <= 0:
+            break
+        
+        # Calculer le nombre de questions pour ce thème
+        if i == len(sorted_themes) - 1:  # Dernier thème
+            theme_questions = remaining_questions
+        else:
+            theme_questions = min(questions_per_theme, remaining_questions)
+        
+        if theme_questions > 0:
+            theme_name = theme.get('nom', 'theme')
+            concepts = ', '.join(theme.get('concepts', []))
+            intention = theme.get('intention', 'informational')
+            exemples = ', '.join(theme.get('exemples_suggestions', [])[:3])
+            
+            prompt = f"""
+            Génère EXACTEMENT {theme_questions} questions conversationnelles SEO pour :
+            
+            Mot-clé principal : "{keyword}"
+            Thème : "{theme_name}"
+            Concepts clés : {concepts}
+            Intention : {intention}
+            Exemples de suggestions : {exemples}
+            
+            Les questions doivent :
+            1. Être naturelles et conversationnelles
+            2. Intégrer le thème "{theme_name}" de manière naturelle
+            3. Correspondre à l'intention "{intention}"
+            4. Être optimisées pour la recherche vocale
+            5. Se terminer par un point d'interrogation
+            6. Être variées et complémentaires
+            
+            Formulations selon l'intention :
+            - Informational : "Comment...", "Pourquoi...", "Qu'est-ce que...", "Quels sont..."
+            - Transactional : "Combien coûte...", "Où acheter...", "Comment réserver...", "Quel prix..."
+            - Navigational : "Où trouver...", "Comment accéder...", "Quelle adresse..."
+            - Local : "... près de moi", "... dans ma ville", "... dans ma région"
+            
+            Présente les questions sous forme de liste numérotée de 1 à {theme_questions}.
+            """
+            
+            response = call_gpt4o_mini(prompt)
+            if response:
+                theme_questions_list = extract_questions_from_response(response)
+                for question in theme_questions_list[:theme_questions]:
+                    all_questions.append({
+                        'Question Conversationnelle': question,
+                        'Thème': theme_name,
+                        'Intention': intention,
+                        'Concepts': concepts,
+                        'Score_Importance': theme.get('importance', 3)
+                    })
+                    remaining_questions -= 1
+    
+    return all_questions
+
 # Création des onglets
 tab1, tab2 = st.tabs(["🔍 Analyseur de Requêtes", "📖 Instructions"])
 
