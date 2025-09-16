@@ -85,7 +85,7 @@ def call_gpt4o_mini(prompt, max_retries=3):
                     }
                 ],
                 max_tokens=1500,
-                temperature=0.7
+                temperature=0.3
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
