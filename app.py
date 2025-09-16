@@ -1112,9 +1112,3 @@ with tab2:
 # Footer
 st.markdown("---")
 st.markdown("*Outil d'optimisation SEO pour requêtes conversationnelles | Powered by GPT-4o mini & Streamlit*")
-    4. Contactez le support si les suggestions Google ne se chargent pas
-    """)
-
-# Footer
-st.markdown("---")
-st.markdown("*Outil d'optimisation SEO pour requêtes conversationnelles | Powered by GPT-4o mini & Streamlit*")
