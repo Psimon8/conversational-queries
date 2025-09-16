@@ -916,25 +916,53 @@ with tab1:
                         intent_counts = df_results['Intention'].value_counts()
                         for intent, count in intent_counts.items():
                             st.markdown(f"- {intent}: {count} questions")
+        else:
+            # Métriques sans questions
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Mots-clés analysés", len(metadata['keywords']))
+            with col2:
+                st.metric("Suggestions collectées", len(results['all_suggestions']))
+            with col3:
+                max_level = 3 if metadata['enable_level3'] else (2 if metadata['enable_level2'] else 1)
+                st.metric("Niveaux activés", str(max_level))
         
-        # Tableau des suggestions avec analyse
-        if metadata.get('generate_questions') and len(results.get('all_suggestions_with_analysis', [])) > 0:
-            st.markdown("### 🔍 Suggestions analysées")
+        # Tableau des suggestions par niveau
+        st.markdown("### 🔍 Suggestions collectées par niveau")
+        
+        # Créer un DataFrame pour les suggestions
+        suggestions_df = pd.DataFrame(results['all_suggestions'])
+        suggestions_display = suggestions_df[['Mot-clé', 'Suggestion Google', 'Niveau', 'Parent']].copy()
+        
+        # Filtres par niveau
+        available_levels = suggestions_df['Niveau'].unique().tolist()
+        nivel_filter = st.multiselect(
+            "Filtrer par niveau",
+            options=available_levels,
+            default=available_levels,
+            format_func=lambda x: f"Niveau {x}"
+        )
+        
+        if nivel_filter:
+            filtered_suggestions = suggestions_display[suggestions_display['Niveau'].isin(nivel_filter)]
+            st.dataframe(filtered_suggestions, use_container_width=True)
+        
+        # Statistiques détaillées
+        with st.expander("📊 Statistiques détaillées"):
+            if metadata['generate_questions']:
+                st.markdown(f"**Questions générées:** {len(results['final_consolidated_data'])}")
+                total_themes = sum(len(themes) for themes in results.get('themes_analysis', {}).values())
+                st.markdown(f"**Thèmes identifiés:** {total_themes}")
             
-            suggestions_analyzed_df = pd.DataFrame(results['all_suggestions_with_analysis'])
+            st.markdown("**Répartition des suggestions par niveau:**")
+            for level, count in results['level_counts'].items():
+                st.markdown(f"- Niveau {level}: {count} suggestions")
             
-            # Extraire les données d'analyse
-            for idx, row in suggestions_analyzed_df.iterrows():
-                analysis = row.get('analysis', {})
-                suggestions_analyzed_df.at[idx, 'Score_Pertinence'] = analysis.get('relevance_score', 0)
-                suggestions_analyzed_df.at[idx, 'Catégorie'] = analysis.get('category', 'unknown')
-                suggestions_analyzed_df.at[idx, 'Intention'] = analysis.get('intent', 'unknown')
-                suggestions_analyzed_df.at[idx, 'Justification'] = analysis.get('justification', '')
-            
-            display_cols = ['Mot-clé', 'Suggestion Google', 'Niveau', 'Score_Pertinence', 'Catégorie', 'Intention', 'Justification']
-            filtered_df = suggestions_analyzed_df[display_cols].copy()
-            
-            st.dataframe(filtered_df, use_container_width=True)
+            # Répartition par mot-clé
+            keyword_counts = suggestions_df['Mot-clé'].value_counts()
+            st.markdown("**Répartition par mot-clé:**")
+            for keyword, count in keyword_counts.items():
+                st.markdown(f"- {keyword}: {count} suggestions")
         
         # Export des résultats
         st.markdown("### 📤 Export des résultats")
@@ -957,15 +985,16 @@ with tab1:
                     key="download_questions_themes_excel"
                 )
             
-            # Export Excel des suggestions
-            suggestions_excel = create_excel_file(suggestions_display)
-            st.download_button(
-                label="🔍 Télécharger Suggestions (Excel)",
-                data=suggestions_excel,
-                file_name="suggestions_google_multiniveaux.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="download_suggestions_excel"
-            )
+            # Export Excel des suggestions (correction ici)
+            if len(results['all_suggestions']) > 0:
+                suggestions_excel = create_excel_file(suggestions_display)
+                st.download_button(
+                    label="🔍 Télécharger Suggestions (Excel)",
+                    data=suggestions_excel,
+                    file_name="suggestions_google_multiniveaux.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="download_suggestions_excel"
+                )
         
         with col2:
             # Export JSON complet
