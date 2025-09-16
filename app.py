@@ -11,6 +11,9 @@ from plotly.subplots import make_subplots
 import plotly.express as px
 from io import BytesIO
 
+# Import du module analytics
+from analytics import analytics
+
 # Configuration de la page Streamlit
 st.set_page_config(
     page_title="SEO Conversational Queries Optimizer",
@@ -18,11 +21,16 @@ st.set_page_config(
     layout="wide"
 )
 
-# Initialisation du session state
+# Initialisation du session state et tracking
 if 'analysis_results' not in st.session_state:
     st.session_state.analysis_results = None
 if 'analysis_metadata' not in st.session_state:
     st.session_state.analysis_metadata = None
+if 'current_query_id' not in st.session_state:
+    st.session_state.current_query_id = None
+
+# Démarrer le tracking de session
+analytics.track_event("page_load")
 
 # Titre principal
 st.title("🔍 Optimiseur de Requêtes Conversationnelles SEO")
@@ -35,6 +43,7 @@ api_key = st.sidebar.text_input("Clé API OpenAI", type="password", help="Votre 
 if api_key:
     client = OpenAI(api_key=api_key)
     st.sidebar.success("✅ API configurée")
+    analytics.track_event("api_configured")
 else:
     st.sidebar.warning("⚠️ Veuillez entrer votre clé API OpenAI")
     client = None
@@ -228,6 +237,7 @@ def create_excel_file(df):
 if 'analysis_results' in st.session_state and st.session_state.analysis_results is not None:
     results = st.session_state.analysis_results
     metadata = st.session_state.analysis_metadata
+    query_id = st.session_state.current_query_id
     
     st.sidebar.header("📤 Export des résultats")
     
@@ -238,28 +248,30 @@ if 'analysis_results' in st.session_state and st.session_state.analysis_results 
         excel_display.columns = ['Questions Conversationnelles', 'Mot-clé', 'Thème', 'Intention', 'Importance']
         
         excel_file = create_excel_file(excel_display)
-        st.sidebar.download_button(
+        if st.sidebar.download_button(
             label="📊 Questions (Excel)",
             data=excel_file,
             file_name="questions_conversationnelles_themes.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key="download_questions_themes_excel",
             use_container_width=True
-        )
+        ):
+            analytics.track_export(query_id, "questions_excel", "questions_conversationnelles_themes.xlsx")
     
     # Export Excel des suggestions
     if len(results['all_suggestions']) > 0:
         suggestions_df = pd.DataFrame(results['all_suggestions'])
         suggestions_display = suggestions_df[['Mot-clé', 'Suggestion Google', 'Niveau', 'Parent']].copy()
         suggestions_excel = create_excel_file(suggestions_display)
-        st.sidebar.download_button(
+        if st.sidebar.download_button(
             label="🔍 Suggestions (Excel)",
             data=suggestions_excel,
             file_name="suggestions_google_multiniveaux.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key="download_suggestions_excel",
             use_container_width=True
-        )
+        ):
+            analytics.track_export(query_id, "suggestions_excel", "suggestions_google_multiniveaux.xlsx")
     
     # Export JSON complet
     export_json = {
@@ -273,14 +285,15 @@ if 'analysis_results' in st.session_state and st.session_state.analysis_results 
     }
     
     json_data = json.dumps(export_json, ensure_ascii=False, indent=2)
-    st.sidebar.download_button(
+    if st.sidebar.download_button(
         label="📋 Données (JSON)",
         data=json_data,
         file_name="analyse_complete_multiniveaux.json",
         mime="application/json",
         key="download_json",
         use_container_width=True
-    )
+    ):
+        analytics.track_export(query_id, "data_json", "analyse_complete_multiniveaux.json")
 
 def get_google_suggestions_multilevel(keyword, lang='fr', level1_count=10, level2_count=5, level3_count=0, enable_level2=True, enable_level3=False):
     """Récupère les suggestions Google à plusieurs niveaux"""
@@ -699,8 +712,8 @@ def generate_questions_from_themes(keyword, themes, target_count):
     
     return all_questions
 
-# Création des onglets
-tab1, tab2 = st.tabs(["🔍 Analyseur de Requêtes", "📖 Instructions"])
+# Création des onglets avec ajout de l'onglet Analytics
+tab1, tab2, tab3 = st.tabs(["🔍 Analyseur de Requêtes", "📊 Analytics", "📖 Instructions"])
 
 # TAB 1: Analyseur principal
 with tab1:
@@ -759,6 +772,23 @@ with tab1:
                     if not keywords:
                         st.error("❌ Veuillez entrer au moins un mot-clé")
                     else:
+                        # Tracking de début d'analyse
+                        start_time = time.time()
+                        analysis_config = {
+                            'api_configured': api_key is not None,
+                            'language': lang,
+                            'level1_count': level1_count,
+                            'level2_count': level2_count,
+                            'level3_count': level3_count,
+                            'generate_questions': generate_questions,
+                            'target_questions': final_questions_count if generate_questions else 0
+                        }
+                        
+                        analytics.track_event("analysis_started", {
+                            'keywords_count': len(keywords),
+                            'config': analysis_config
+                        })
+                        
                         # Réinitialiser les résultats précédents
                         st.session_state.analysis_results = None
                         st.session_state.analysis_metadata = None
@@ -898,14 +928,44 @@ with tab1:
                                 'timestamp': time.strftime("%Y-%m-%d %H:%M:%S")
                             }
                             
-                            # Nettoyer les éléments temporaires
-                            progress_bar.empty()
-                            status_text.empty()
+                            # Tracking de succès
+                            query_id = analytics.track_query(
+                                keywords, 
+                                analysis_config, 
+                                st.session_state.analysis_results,
+                                processing_time
+                            )
+                            st.session_state.current_query_id = query_id
+                            
+                            analytics.track_event("analysis_completed", {
+                                'processing_time': processing_time,
+                                'suggestions_found': len(all_suggestions),
+                                'questions_generated': len(final_consolidated_data) if generate_questions else 0
+                            })
+                            
+                        except Exception as e:
+                            # Tracking d'erreur
+                            processing_time = time.time() - start_time
+                            analytics.track_query(
+                                keywords, 
+                                analysis_config, 
+                                None,
+                                processing_time,
+                                error=str(e)
+                            )
+                            analytics.track_event("analysis_error", {'error': str(e)})
+                            st.error(f"❌ Erreur lors de l'analyse: {str(e)}")
+                        
+                        # Nettoyer les éléments temporaires
+                        progress_bar.empty()
+                        status_text.empty()
     
     with col_clear:
         if st.button("🗑️ Effacer", help="Effacer les résultats actuels"):
+            analytics.track_event("results_cleared")
             st.session_state.analysis_results = None
             st.session_state.analysis_metadata = None
+            st.session_state.current_query_id = None
             st.rerun()
     
     # Affichage des résultats sauvegardés
@@ -1016,8 +1076,36 @@ with tab1:
             for keyword, count in keyword_counts.items():
                 st.markdown(f"- {keyword}: {count} suggestions")
 
-# TAB 2: Instructions d'utilisation
+# TAB 2: Analytics Dashboard
 with tab2:
+    analytics.create_dashboard()
+    
+    # Options d'export des analytics
+    st.markdown("### 📤 Export des données d'analytics")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        days_filter = st.selectbox(
+            "Période d'analyse",
+            [7, 30, 90, 365],
+            index=1,
+            format_func=lambda x: f"{x} derniers jours"
+        )
+    
+    with col2:
+        if st.button("📊 Exporter analytics (Excel)"):
+            analytics_data = analytics.export_analytics_data(days_filter)
+            st.download_button(
+                label="💾 Télécharger le rapport",
+                data=analytics_data,
+                file_name=f"analytics_rapport_{days_filter}j.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            analytics.track_event("analytics_exported", {'days': days_filter})
+
+# TAB 3: Instructions d'utilisation
+with tab3:
     st.markdown("""
     # 📖 Instructions d'utilisation
     
@@ -1112,3 +1200,7 @@ with tab2:
 # Footer
 st.markdown("---")
 st.markdown("*Outil d'optimisation SEO pour requêtes conversationnelles | Powered by GPT-4o mini & Streamlit*")
+
+# Tracking de fin de session au nettoyage
+if st.session_state.get('cleanup', False):
+    analytics.end_session()
