@@ -311,16 +311,38 @@ class Analytics:
             if not data['queries'].empty:
                 recent_queries = data['queries'].sort_values('timestamp', ascending=False).head(20)
                 display_queries = recent_queries[[
-                    'timestamp', 'keywords_count', 'language', 
+                    'timestamp', 'keywords', 'keywords_count', 'language', 
                     'suggestions_found', 'questions_generated', 
                     'processing_time', 'success'
                 ]].copy()
+                
+                # Raccourcir les mots-clés pour l'affichage
+                display_queries['keywords_short'] = display_queries['keywords'].apply(
+                    lambda x: (x[:50] + '...') if len(str(x)) > 50 else x
+                )
+                
+                # Réorganiser les colonnes
+                display_queries = display_queries[[
+                    'timestamp', 'keywords_short', 'keywords_count', 'language', 
+                    'suggestions_found', 'questions_generated', 
+                    'processing_time', 'success'
+                ]]
+                
                 display_queries.columns = [
-                    'Horodatage', 'Nb mots-clés', 'Langue', 
+                    'Horodatage', 'Mots-clés', 'Nb mots-clés', 'Langue', 
                     'Suggestions trouvées', 'Questions générées', 
                     'Temps (s)', 'Succès'
                 ]
+                
                 st.dataframe(display_queries, use_container_width=True)
+                
+                # Option pour voir les mots-clés complets
+                if st.button("📋 Afficher mots-clés complets"):
+                    st.markdown("**Mots-clés complets des requêtes récentes:**")
+                    for idx, row in recent_queries.iterrows():
+                        keywords_list = row['keywords'].split('\n') if row['keywords'] else []
+                        formatted_keywords = ', '.join(keywords_list)
+                        st.markdown(f"**{row['timestamp']}:** {formatted_keywords}")
         
         # Analyse des mots-clés populaires
         with st.expander("🎯 Mots-clés populaires"):
@@ -372,17 +394,76 @@ class Analytics:
             stats_df = pd.DataFrame([data['stats']])
             stats_df.to_excel(writer, sheet_name='Statistiques', index=False)
             
-            # Requêtes
+            # Requêtes avec mots-clés détaillés
             if not data['queries'].empty:
-                data['queries'].to_excel(writer, sheet_name='Requetes', index=False)
+                queries_export = data['queries'].copy()
+                
+                # Créer une version expandée avec un mot-clé par ligne
+                expanded_queries = []
+                for idx, row in queries_export.iterrows():
+                    if row['keywords']:
+                        keywords_list = row['keywords'].split('\n')
+                        for keyword in keywords_list:
+                            if keyword.strip():
+                                expanded_row = row.to_dict()
+                                expanded_row['mot_cle_individuel'] = keyword.strip()
+                                expanded_queries.append(expanded_row)
+                
+                # Export des requêtes complètes
+                queries_export.to_excel(writer, sheet_name='Requetes_Completes', index=False)
+                
+                # Export des requêtes expandées (un mot-clé par ligne)
+                if expanded_queries:
+                    expanded_df = pd.DataFrame(expanded_queries)
+                    export_columns = [
+                        'timestamp', 'mot_cle_individuel', 'language', 
+                        'suggestions_found', 'questions_generated', 'themes_identified',
+                        'processing_time', 'success', 'level1_count', 'level2_count', 
+                        'level3_count', 'generate_questions', 'target_questions'
+                    ]
+                    expanded_export = expanded_df[export_columns].copy()
+                    expanded_export.columns = [
+                        'Horodatage', 'Mot-clé', 'Langue', 
+                        'Suggestions trouvées', 'Questions générées', 'Thèmes identifiés',
+                        'Temps traitement (s)', 'Succès', 'Niveau 1', 'Niveau 2',
+                        'Niveau 3', 'Génération questions', 'Questions cibles'
+                    ]
+                    expanded_export.to_excel(writer, sheet_name='Mots_Cles_Detailles', index=False)
+                
+                # Analyse des mots-clés populaires
+                all_keywords = []
+                for keywords_text in queries_export['keywords'].dropna():
+                    keywords_list = keywords_text.split('\n')
+                    all_keywords.extend([kw.strip().lower() for kw in keywords_list if kw.strip()])
+                
+                if all_keywords:
+                    keyword_counts = Counter(all_keywords)
+                    popular_keywords = keyword_counts.most_common(50)
+                    keywords_df = pd.DataFrame(popular_keywords, columns=['Mot-clé', 'Fréquence'])
+                    
+                    # Calculer des statistiques supplémentaires
+                    total_searches = len(all_keywords)
+                    keywords_df['Pourcentage'] = (keywords_df['Fréquence'] / total_searches * 100).round(2)
+                    
+                    keywords_df.to_excel(writer, sheet_name='Mots_Cles_Populaires', index=False)
             
             # Sessions
             if not data['sessions'].empty:
-                data['sessions'].to_excel(writer, sheet_name='Sessions', index=False)
+                sessions_export = data['sessions'].copy()
+                sessions_export.columns = [
+                    'ID', 'ID Utilisateur', 'Début session', 'Fin session', 
+                    'API configurée', 'Langue'
+                ]
+                sessions_export.to_excel(writer, sheet_name='Sessions', index=False)
             
             # Exports
             if not data['exports'].empty:
-                data['exports'].to_excel(writer, sheet_name='Exports', index=False)
+                exports_export = data['exports'].copy()
+                exports_export.columns = [
+                    'ID', 'ID Utilisateur', 'ID Session', 'ID Requête', 
+                    'Horodatage', 'Type export', 'Nom fichier', 'Succès'
+                ]
+                exports_export.to_excel(writer, sheet_name='Exports', index=False)
         
         output.seek(0)
         return output
