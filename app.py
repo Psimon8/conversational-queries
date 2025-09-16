@@ -63,64 +63,6 @@ lang = st.sidebar.selectbox(
     help="Langue pour les suggestions Google"
 )
 
-# Export des résultats dans la sidebar
-if 'analysis_results' in st.session_state and st.session_state.analysis_results is not None:
-    results = st.session_state.analysis_results
-    metadata = st.session_state.analysis_metadata
-    
-    st.sidebar.header("📤 Export des résultats")
-    
-    if metadata['generate_questions'] and len(results['final_consolidated_data']) > 0:
-        # Export Excel des questions avec thèmes
-        excel_df = pd.DataFrame(results['final_consolidated_data'])
-        excel_display = excel_df[['Question Conversationnelle', 'Mot-clé', 'Thème', 'Intention', 'Score_Importance']].copy()
-        excel_display.columns = ['Questions Conversationnelles', 'Mot-clé', 'Thème', 'Intention', 'Importance']
-        
-        excel_file = create_excel_file(excel_display)
-        st.sidebar.download_button(
-            label="📊 Questions (Excel)",
-            data=excel_file,
-            file_name="questions_conversationnelles_themes.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="download_questions_themes_excel",
-            use_container_width=True
-        )
-    
-    # Export Excel des suggestions
-    if len(results['all_suggestions']) > 0:
-        suggestions_df = pd.DataFrame(results['all_suggestions'])
-        suggestions_display = suggestions_df[['Mot-clé', 'Suggestion Google', 'Niveau', 'Parent']].copy()
-        suggestions_excel = create_excel_file(suggestions_display)
-        st.sidebar.download_button(
-            label="🔍 Suggestions (Excel)",
-            data=suggestions_excel,
-            file_name="suggestions_google_multiniveaux.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="download_suggestions_excel",
-            use_container_width=True
-        )
-    
-    # Export JSON complet
-    export_json = {
-        "metadata": {
-            **metadata,
-            "total_suggestions": len(results['all_suggestions']),
-            "level_distribution": results['level_counts']
-        },
-        "suggestions": results['all_suggestions'],
-        "questions": results['final_consolidated_data'] if metadata['generate_questions'] else []
-    }
-    
-    json_data = json.dumps(export_json, ensure_ascii=False, indent=2)
-    st.sidebar.download_button(
-        label="📋 Données (JSON)",
-        data=json_data,
-        file_name="analyse_complete_multiniveaux.json",
-        mime="application/json",
-        key="download_json",
-        use_container_width=True
-    )
-
 # Fonctions utilitaires communes
 def call_gpt4o_mini(prompt, max_retries=3):
     """Appel à l'API GPT-4o mini avec gestion d'erreurs"""
@@ -282,14 +224,66 @@ def create_excel_file(df):
     output.seek(0)
     return output
 
+# Export des résultats dans la sidebar (après la définition des fonctions)
+if 'analysis_results' in st.session_state and st.session_state.analysis_results is not None:
+    results = st.session_state.analysis_results
+    metadata = st.session_state.analysis_metadata
+    
+    st.sidebar.header("📤 Export des résultats")
+    
+    if metadata['generate_questions'] and len(results['final_consolidated_data']) > 0:
+        # Export Excel des questions avec thèmes
+        excel_df = pd.DataFrame(results['final_consolidated_data'])
+        excel_display = excel_df[['Question Conversationnelle', 'Mot-clé', 'Thème', 'Intention', 'Score_Importance']].copy()
+        excel_display.columns = ['Questions Conversationnelles', 'Mot-clé', 'Thème', 'Intention', 'Importance']
+        
+        excel_file = create_excel_file(excel_display)
+        st.sidebar.download_button(
+            label="📊 Questions (Excel)",
+            data=excel_file,
+            file_name="questions_conversationnelles_themes.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="download_questions_themes_excel",
+            use_container_width=True
+        )
+    
+    # Export Excel des suggestions
+    if len(results['all_suggestions']) > 0:
+        suggestions_df = pd.DataFrame(results['all_suggestions'])
+        suggestions_display = suggestions_df[['Mot-clé', 'Suggestion Google', 'Niveau', 'Parent']].copy()
+        suggestions_excel = create_excel_file(suggestions_display)
+        st.sidebar.download_button(
+            label="🔍 Suggestions (Excel)",
+            data=suggestions_excel,
+            file_name="suggestions_google_multiniveaux.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="download_suggestions_excel",
+            use_container_width=True
+        )
+    
+    # Export JSON complet
+    export_json = {
+        "metadata": {
+            **metadata,
+            "total_suggestions": len(results['all_suggestions']),
+            "level_distribution": results['level_counts']
+        },
+        "suggestions": results['all_suggestions'],
+        "questions": results['final_consolidated_data'] if metadata['generate_questions'] else []
+    }
+    
+    json_data = json.dumps(export_json, ensure_ascii=False, indent=2)
+    st.sidebar.download_button(
+        label="📋 Données (JSON)",
+        data=json_data,
+        file_name="analyse_complete_multiniveaux.json",
+        mime="application/json",
+        key="download_json",
+        use_container_width=True
+    )
+
 def get_google_suggestions_multilevel(keyword, lang='fr', level1_count=10, level2_count=5, level3_count=0, enable_level2=True, enable_level3=False):
-    """
-    Récupère les suggestions Google à plusieurs niveaux
-    - Niveau 0: mot-clé de base
-    - Niveau 1: suggestions directes du mot-clé (2-15)
-    - Niveau 2: suggestions des suggestions de niveau 1 (0-15)
-    - Niveau 3: suggestions des suggestions de niveau 2 (0-15)
-    """
+    """Récupère les suggestions Google à plusieurs niveaux"""
     all_suggestions = []
     processed_suggestions = set()  # Pour éviter les doublons
     
@@ -1112,6 +1106,12 @@ with tab2:
     1. Vérifiez votre clé API OpenAI
     2. Assurez-vous d'avoir une connexion internet stable
     3. Réduisez le nombre de mots-clés si l'analyse est trop lente
+    4. Contactez le support si les suggestions Google ne se chargent pas
+    """)
+
+# Footer
+st.markdown("---")
+st.markdown("*Outil d'optimisation SEO pour requêtes conversationnelles | Powered by GPT-4o mini & Streamlit*")
     4. Contactez le support si les suggestions Google ne se chargent pas
     """)
 
