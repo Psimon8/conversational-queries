@@ -625,75 +625,83 @@ with tab1:
                             all_questions_data = []
                             
                             if generate_questions:
-                                # Étape 2: Génération des questions conversationnelles
-                                status_text.text("⏳ Étape 2/3: Génération des questions conversationnelles...")
+                                # Étape 2: Analyse des thèmes récurrents
+                                status_text.text("⏳ Étape 2/4: Analyse des thèmes récurrents dans les suggestions...")
+                                progress_bar.progress(50)
                                 
-                                processed = 0
-                                total_items = len(all_suggestions)
+                                # Analyser les thèmes pour chaque mot-clé
+                                all_themes = {}
+                                for keyword in keywords:
+                                    keyword_suggestions = [s for s in all_suggestions if s['Mot-clé'] == keyword]
+                                    themes = analyze_suggestions_themes(keyword_suggestions, keyword)
+                                    all_themes[keyword] = themes
+                                    time.sleep(1)  # Délai pour éviter le rate limiting
                                 
-                                for item in all_suggestions:
-                                    keyword = item['Mot-clé']
-                                    suggestion = item['Suggestion Google']
-                                    niveau = item['Niveau']
-                                    parent = item['Parent']
+                                # Étape 3: Génération intelligente des questions
+                                status_text.text("⏳ Étape 3/4: Génération des questions conversationnelles par thème...")
+                                progress_bar.progress(70)
+                                
+                                all_questions_data = []
+                                questions_per_keyword = final_questions_count // len(keywords)
+                                remaining_questions = final_questions_count
+                                
+                                for i, keyword in enumerate(keywords):
+                                    # Calculer le nombre de questions pour ce mot-clé
+                                    if i == len(keywords) - 1:  # Dernier mot-clé
+                                        keyword_questions = remaining_questions
+                                    else:
+                                        keyword_questions = min(questions_per_keyword, remaining_questions)
                                     
-                                    prompt = f"""
-                                    Basé sur le mot-clé "{keyword}" et la suggestion Google "{suggestion}" (niveau {niveau}), 
-                                    génère EXACTEMENT 5 questions conversationnelles SEO pertinentes au format question.
+                                    if keyword_questions > 0:
+                                        themes = all_themes.get(keyword, [])
+                                        if themes:
+                                            keyword_questions_list = generate_questions_from_themes(
+                                                keyword, 
+                                                themes, 
+                                                keyword_questions
+                                            )
+                                            
+                                            for q in keyword_questions_list:
+                                                q['Mot-clé'] = keyword
+                                                all_questions_data.append(q)
+                                            
+                                            remaining_questions -= len(keyword_questions_list)
+                                        else:
+                                            st.warning(f"Aucun thème identifié pour '{keyword}'")
                                     
-                                    Les questions doivent :
-                                    - Être naturelles et conversationnelles
-                                    - Optimisées pour la recherche vocale
-                                    - Pertinentes pour l'intention de recherche
-                                    - Se terminer par un point d'interrogation
-                                    - Être variées dans leur formulation
-                                    
-                                    Présente-les sous forme de liste numérotée de 1 à 5.
-                                    """
-                                    
-                                    response = call_gpt4o_mini(prompt)
-                                    if response:
-                                        questions = extract_questions_from_response(response)
-                                        for question in questions[:5]:
-                                            all_questions_data.append({
-                                                'Mot-clé': keyword,
-                                                'Suggestion Google': suggestion,
-                                                'Question Conversationnelle': question,
-                                                'Niveau': niveau,
-                                                'Parent': parent
-                                            })
-                                    
-                                    processed += 1
-                                    progress_bar.progress(40 + (processed * 40 // total_items))
-                                    time.sleep(0.5)
-                                    
-                                    # Affichage du progrès en temps réel
-                                    current_questions = len(all_questions_data)
-                                    status_text.text(f"⏳ Étape 2/3: {current_questions} questions générées...")
+                                    time.sleep(0.5)  # Délai entre les mots-clés
                                 
                                 if not all_questions_data:
                                     st.error("❌ Aucune question générée")
                                 else:
-                                    st.info(f"✅ {len(all_questions_data)} questions générées au total")
+                                    st.info(f"✅ {len(all_questions_data)} questions conversationnelles générées à partir des thèmes")
                                     
-                                    # Étape 3: Consolidation et déduplication
-                                    status_text.text("⏳ Étape 3/3: Consolidation et déduplication...")
+                                    # Étape 4: Finalisation
+                                    status_text.text("⏳ Étape 4/4: Finalisation...")
                                     progress_bar.progress(90)
                                     
-                                    final_consolidated_data = consolidate_and_deduplicate(
-                                        all_questions_data, 
-                                        final_questions_count
+                                    # Trier par score d'importance et limiter au nombre demandé
+                                    sorted_questions = sorted(
+                                        all_questions_data,
+                                        key=lambda x: x.get('Score_Importance', 0),
+                                        reverse=True
                                     )
-                            
+                                    
+                                    final_consolidated_data = sorted_questions[:final_questions_count]
+                                    
+                                    # Sauvegarder les thèmes pour l'affichage
+                                    st.session_state.themes_analysis = all_themes
+
                             progress_bar.progress(100)
                             status_text.text("✅ Analyse terminée !")
                             
                             # Sauvegarder les résultats dans le session state
                             st.session_state.analysis_results = {
                                 'all_suggestions': all_suggestions,
-                                'all_questions_data': all_questions_data,
-                                'final_consolidated_data': final_consolidated_data,
-                                'level_counts': level_counts
+                                'all_questions_data': all_questions_data if generate_questions else [],
+                                'final_consolidated_data': final_consolidated_data if generate_questions else [],
+                                'level_counts': level_counts,
+                                'themes_analysis': all_themes if generate_questions else {}
                             }
                             
                             st.session_state.analysis_metadata = {
@@ -733,30 +741,45 @@ with tab1:
             with col2:
                 st.metric("Suggestions collectées", len(results['all_suggestions']))
             with col3:
-                st.metric("Questions générées", len(results['all_questions_data']))
+                total_themes = sum(len(themes) for themes in results.get('themes_analysis', {}).values())
+                st.metric("Thèmes identifiés", total_themes)
             with col4:
-                st.metric("Questions finales", len(results['final_consolidated_data']))
+                st.metric("Questions générées", len(results['final_consolidated_data']))
             with col5:
-                avg_score = sum(q.get('Score_Pertinence', 0) for q in results['final_consolidated_data']) / len(results['final_consolidated_data']) if results['final_consolidated_data'] else 0
-                st.metric("Score moyen", f"{avg_score:.1f}/10")
+                avg_importance = sum(q.get('Score_Importance', 0) for q in results['final_consolidated_data']) / len(results['final_consolidated_data']) if results['final_consolidated_data'] else 0
+                st.metric("Importance moyenne", f"{avg_importance:.1f}/5")
             
             # Tableau des résultats avec questions amélioré
-            st.markdown("### 📋 Questions conversationnelles générées intelligemment")
+            st.markdown("### 📋 Questions conversationnelles basées sur les thèmes")
             if len(results['final_consolidated_data']) > 0:
                 df_results = pd.DataFrame(results['final_consolidated_data'])
-                df_display = df_results[['Question Conversationnelle', 'Catégorie', 'Intention', 'Score_Pertinence', 'Suggestion Google', 'Mot-clé']].copy()
-                df_display.columns = ['Questions Conversationnelles', 'Catégorie', 'Intention', 'Score', 'Suggestion', 'Mot-clé']
+                df_display = df_results[['Question Conversationnelle', 'Thème', 'Intention', 'Score_Importance', 'Mot-clé']].copy()
+                df_display.columns = ['Questions Conversationnelles', 'Thème', 'Intention', 'Importance', 'Mot-clé']
                 st.dataframe(df_display, use_container_width=True)
                 
-                # Statistiques par catégorie
-                with st.expander("📊 Répartition par catégorie et intention"):
+                # Analyse des thèmes
+                with st.expander("📊 Analyse détaillée des thèmes"):
+                    themes_analysis = results.get('themes_analysis', {})
+                    
+                    for keyword, themes in themes_analysis.items():
+                        if themes:
+                            st.markdown(f"**Thèmes pour '{keyword}' :**")
+                            themes_df = pd.DataFrame(themes)
+                            if not themes_df.empty:
+                                display_themes = themes_df[['nom', 'importance', 'intention', 'concepts']].copy()
+                                display_themes.columns = ['Thème', 'Importance', 'Intention', 'Concepts']
+                                st.dataframe(display_themes, use_container_width=True)
+                                st.markdown("---")
+                
+                # Statistiques par thème et intention
+                with st.expander("📈 Répartition des questions"):
                     col1, col2 = st.columns(2)
                     
                     with col1:
-                        st.markdown("**Répartition par catégorie:**")
-                        category_counts = df_results['Catégorie'].value_counts()
-                        for category, count in category_counts.items():
-                            st.markdown(f"- {category}: {count} questions")
+                        st.markdown("**Répartition par thème:**")
+                        theme_counts = df_results['Thème'].value_counts()
+                        for theme, count in theme_counts.items():
+                            st.markdown(f"- {theme}: {count} questions")
                     
                     with col2:
                         st.markdown("**Répartition par intention:**")
@@ -790,18 +813,18 @@ with tab1:
         
         with col1:
             if metadata['generate_questions'] and len(results['final_consolidated_data']) > 0:
-                # Export Excel des questions avec métadonnées enrichies
+                # Export Excel des questions avec thèmes
                 excel_df = pd.DataFrame(results['final_consolidated_data'])
-                excel_display = excel_df[['Question Conversationnelle', 'Suggestion Google', 'Mot-clé', 'Catégorie', 'Intention', 'Score_Pertinence']].copy()
-                excel_display.columns = ['Questions Conversationnelles', 'Suggestion', 'Mot-clé', 'Catégorie', 'Intention', 'Score']
+                excel_display = excel_df[['Question Conversationnelle', 'Mot-clé', 'Thème', 'Intention', 'Score_Importance']].copy()
+                excel_display.columns = ['Questions Conversationnelles', 'Mot-clé', 'Thème', 'Intention', 'Importance']
                 
                 excel_file = create_excel_file(excel_display)
                 st.download_button(
-                    label="📊 Télécharger Questions Analysées (Excel)",
+                    label="📊 Télécharger Questions par Thèmes (Excel)",
                     data=excel_file,
-                    file_name="questions_conversationnelles_analysees.xlsx",
+                    file_name="questions_conversationnelles_themes.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="download_questions_analyzed_excel"
+                    key="download_questions_themes_excel"
                 )
             
             # Export Excel des suggestions
