@@ -807,9 +807,9 @@ with tab1:
                             
                             # Étape 1: Collecte des suggestions multi-niveaux
                             status_text.text("⏳ Étape 1/5: Collecte des suggestions Google multi-niveaux...")
-                                
+                            
                             all_suggestions = []
-                                
+                            
                             for i, keyword in enumerate(keywords):
                                 keyword_suggestions = get_google_suggestions_multilevel(
                                     keyword, 
@@ -824,7 +824,7 @@ with tab1:
                                 
                                 progress_bar.progress((i + 1) * 15 // len(keywords))
                                 status_text.text(f"⏳ Collecte en cours... {len(all_suggestions)} suggestions trouvées")
-                                
+                            
                             if not all_suggestions:
                                 st.error("❌ Aucune suggestion trouvée")
                             else:
@@ -978,6 +978,9 @@ with tab1:
                                     
                                     # Forcer le rechargement pour afficher l'interface de sélection
                                     st.rerun()
+                        
+                        except Exception as e:
+                            st.error(f"❌ Erreur lors de l'analyse: {str(e)}")
 
     with col_clear:
         if st.button("🗑️ Effacer", help="Effacer les résultats actuels"):
