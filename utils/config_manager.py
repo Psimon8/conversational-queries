@@ -47,6 +47,8 @@ class ConfigManager:
         }
         
         if enable_dataforseo:
+            st.sidebar.info("💡 DataForSEO ajoutera volumes de recherche et suggestions Ads à vos mots-clés")
+            
             with st.sidebar.expander("🔧 Paramètres DataForSEO", expanded=True):
                 dataforseo_config['login'] = st.text_input(
                     "Login DataForSEO", 
@@ -80,8 +82,10 @@ class ConfigManager:
                     min_value=0,
                     max_value=1000,
                     value=10,
-                    help="Volume mensuel minimum"
+                    help="Volume mensuel minimum pour conserver un mot-clé"
                 )
+                
+                st.info(f"🎯 Seuls les mots-clés avec ≥ {dataforseo_config['min_volume']} recherches/mois seront conservés")
             
             # Validation des credentials
             if dataforseo_config['login'] and dataforseo_config['password']:
@@ -98,6 +102,7 @@ class ConfigManager:
                         st.sidebar.error(message)
                 
                 st.sidebar.success("✅ DataForSEO configuré")
+                st.sidebar.caption("📈 Volumes + 💰 Suggestions Ads seront ajoutés")
             else:
                 st.sidebar.warning("⚠️ Login/Password requis")
         

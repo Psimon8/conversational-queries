@@ -74,7 +74,7 @@ class ExportManager:
             file_name="questions_conversationnelles.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key="download_questions_excel",
-            use_container_width=True
+            width='stretch'
         )
     
     def _render_suggestions_export(self):
@@ -87,14 +87,14 @@ class ExportManager:
             if not enriched_df.empty and 'keyword' in enriched_df.columns:
                 # Merger les données
                 merged_df = suggestions_df.merge(
-                    enriched_df[['keyword', 'search_volume', 'cpc', 'competition_level']],
+                    enriched_df[['keyword', 'search_volume', 'cpc', 'competition_level', 'source']],
                     left_on='Suggestion Google',
                     right_on='keyword',
                     how='left'
                 )
                 
-                export_cols = ['Mot-clé', 'Suggestion Google', 'Niveau', 'Parent', 'search_volume', 'cpc', 'competition_level']
-                export_names = ['Mot-clé', 'Suggestion Google', 'Niveau', 'Parent', 'Volume', 'CPC', 'Concurrence']
+                export_cols = ['Mot-clé', 'Suggestion Google', 'Niveau', 'Parent', 'search_volume', 'cpc', 'competition_level', 'source']
+                export_names = ['Mot-clé', 'Suggestion Google', 'Niveau', 'Parent', 'Volume', 'CPC', 'Concurrence', 'Source']
                 
                 # Garder seulement les colonnes existantes
                 existing_cols = [col for col in export_cols if col in merged_df.columns]
@@ -102,6 +102,17 @@ class ExportManager:
                 
                 suggestions_display = merged_df[existing_cols].copy()
                 suggestions_display.columns = existing_names
+                
+                # Formater les colonnes pour l'export
+                if 'Volume' in suggestions_display.columns:
+                    suggestions_display['Volume'] = suggestions_display['Volume'].fillna(0).astype(int)
+                if 'CPC' in suggestions_display.columns:
+                    suggestions_display['CPC'] = suggestions_display['CPC'].fillna(0).round(2)
+                if 'Source' in suggestions_display.columns:
+                    suggestions_display['Source'] = suggestions_display['Source'].fillna('Google Suggest').replace({
+                        'google_suggest': 'Google Suggest',
+                        'google_ads': 'Google Ads'
+                    })
             else:
                 suggestions_display = suggestions_df[['Mot-clé', 'Suggestion Google', 'Niveau', 'Parent']].copy()
         else:
@@ -114,9 +125,34 @@ class ExportManager:
             file_name="suggestions_google.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key="download_suggestions_excel",
-            use_container_width=True
+            width='stretch'
         )
-    
+        
+        # Export séparé pour les suggestions Google Ads si disponibles
+        ads_suggestions = self.results.get('dataforseo_data', {}).get('ads_suggestions', [])
+        if ads_suggestions:
+            ads_df = pd.DataFrame(ads_suggestions)
+            ads_display_cols = ['keyword', 'search_volume', 'cpc', 'competition_level', 'source_keyword']
+            ads_available_cols = [col for col in ads_display_cols if col in ads_df.columns]
+            
+            if ads_available_cols:
+                ads_export = ads_df[ads_available_cols].copy()
+                ads_export.columns = ['Suggestion Ads', 'Volume', 'CPC', 'Concurrence', 'Mot-clé source']
+                
+                # Formater les colonnes
+                ads_export['Volume'] = ads_export['Volume'].fillna(0).astype(int)
+                ads_export['CPC'] = ads_export['CPC'].fillna(0).round(2)
+                
+                ads_excel = create_excel_file(ads_export)
+                st.sidebar.download_button(
+                    label="💰 Suggestions Ads (Excel)",
+                    data=ads_excel,
+                    file_name="suggestions_google_ads.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="download_ads_excel",
+                    width='stretch'
+                )
+
     def _render_json_export(self):
         """Export JSON complet"""
         export_data = {
@@ -143,7 +179,7 @@ class ExportManager:
             file_name="analyse_complete.json",
             mime="application/json",
             key="download_json",
-            use_container_width=True
+            width='stretch'
         )
     
     def _render_status(self):

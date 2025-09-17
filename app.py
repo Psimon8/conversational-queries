@@ -352,22 +352,154 @@ def render_final_results():
     st.markdown("---")
     st.markdown("## 📊 Résultats finaux")
     
-    # Métriques
+    # Métriques principales
     metrics = {
         "Mots-clés": len(metadata['keywords']),
         "Suggestions": len(results['all_suggestions']),
         "Questions": len(results['final_consolidated_data']),
         "Thèmes sélectionnés": sum(len(themes) for themes in results.get('selected_themes_by_keyword', {}).values())
     }
+    
+    # Ajouter métriques DataForSEO si disponible
+    if results.get('enriched_keywords'):
+        enriched_keywords = results['enriched_keywords']
+        keywords_with_volume = [k for k in enriched_keywords if k.get('search_volume', 0) > 0]
+        ads_keywords = [k for k in enriched_keywords if k.get('source') == 'google_ads']
+        
+        metrics.update({
+            "Avec volume": len(keywords_with_volume),
+            "Suggestions Ads": len(ads_keywords)
+        })
+    
     render_metrics(metrics)
     
-    # Tableau des questions
+    # Tableau des questions avec volumes si disponible
     if results.get('final_consolidated_data'):
         st.markdown("### 📋 Questions conversationnelles")
         df = pd.DataFrame(results['final_consolidated_data'])
-        display_cols = ['Question Conversationnelle', 'Suggestion Google', 'Thème', 'Intention', 'Score_Importance']
-        available_cols = [col for col in display_cols if col in df.columns]
-        st.dataframe(df[available_cols], use_container_width=True)
+        
+        # Si on a des données enrichies, essayer de les associer aux questions
+        if results.get('enriched_keywords'):
+            enriched_df = pd.DataFrame(results['enriched_keywords'])
+            if not enriched_df.empty and 'keyword' in enriched_df.columns:
+                # Merger les données de volume avec les questions
+                merged_df = df.merge(
+                    enriched_df[['keyword', 'search_volume', 'cpc']],
+                    left_on='Suggestion Google',
+                    right_on='keyword',
+                    how='left'
+                )
+                
+                display_cols = ['Question Conversationnelle', 'Suggestion Google', 'Thème', 'Intention', 'Score_Importance', 'search_volume', 'cpc']
+                available_cols = [col for col in display_cols if col in merged_df.columns]
+                
+                display_df = merged_df[available_cols].copy()
+                
+                # Renommer et formater les colonnes
+                column_mapping = {
+                    'search_volume': 'Volume',
+                    'cpc': 'CPC'
+                }
+                display_df = display_df.rename(columns=column_mapping)
+                
+                if 'Volume' in display_df.columns:
+                    display_df['Volume'] = display_df['Volume'].fillna(0).astype(int)
+                if 'CPC' in display_df.columns:
+                    display_df['CPC'] = display_df['CPC'].fillna(0).round(2)
+                
+                st.dataframe(display_df, width='stretch')
+            else:
+                # Fallback sans données de volume
+                display_cols = ['Question Conversationnelle', 'Suggestion Google', 'Thème', 'Intention', 'Score_Importance']
+                available_cols = [col for col in display_cols if col in df.columns]
+                st.dataframe(df[available_cols], width='stretch')
+        else:
+            # Pas de données DataForSEO
+            display_cols = ['Question Conversationnelle', 'Suggestion Google', 'Thème', 'Intention', 'Score_Importance']
+            available_cols = [col for col in display_cols if col in df.columns]
+            st.dataframe(df[available_cols], width='stretch')
+    
+    # Afficher aussi l'analyse des mots-clés si DataForSEO activé
+    if results.get('enriched_keywords'):
+        with st.expander("📈 Analyse détaillée des mots-clés et volumes"):
+            render_detailed_keywords_analysis(results)
+
+def render_detailed_keywords_analysis(results):
+    """Affichage détaillé de l'analyse des mots-clés"""
+    enriched_keywords = results.get('enriched_keywords', [])
+    
+    if not enriched_keywords:
+        st.info("Aucune donnée enrichie disponible")
+        return
+    
+    # Séparer par source
+    google_suggest_keywords = [k for k in enriched_keywords if k.get('source') == 'google_suggest']
+    google_ads_keywords = [k for k in enriched_keywords if k.get('source') == 'google_ads']
+    
+    tab1, tab2 = st.tabs(["🔍 Google Suggest", "💰 Google Ads"])
+    
+    with tab1:
+        if google_suggest_keywords:
+            st.markdown(f"**{len(google_suggest_keywords)} mots-clés de Google Suggest**")
+            
+            # Créer un DataFrame pour Google Suggest
+            suggest_df = pd.DataFrame(google_suggest_keywords)
+            display_suggest = suggest_df[['keyword', 'search_volume', 'cpc', 'competition_level']].copy()
+            display_suggest.columns = ['Mot-clé', 'Volume', 'CPC', 'Concurrence']
+            display_suggest['Volume'] = display_suggest['Volume'].fillna(0).astype(int)
+            display_suggest['CPC'] = display_suggest['CPC'].fillna(0).round(2)
+            
+            # Trier par volume décroissant
+            display_suggest = display_suggest.sort_values('Volume', ascending=False)
+            
+            st.dataframe(display_suggest, width='stretch')
+            
+            # Statistiques Google Suggest
+            volumes = display_suggest['Volume'].tolist()
+            st.markdown("**Statistiques:**")
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Volume total", f"{sum(volumes):,}")
+            with col2:
+                st.metric("Volume moyen", f"{sum(volumes)/len(volumes):.0f}")
+            with col3:
+                st.metric("Avec volume > 0", len([v for v in volumes if v > 0]))
+            with col4:
+                st.metric("Volume max", f"{max(volumes):,}")
+        else:
+            st.info("Aucun mot-clé Google Suggest enrichi")
+    
+    with tab2:
+        if google_ads_keywords:
+            st.markdown(f"**{len(google_ads_keywords)} suggestions Google Ads**")
+            
+            # Créer un DataFrame pour Google Ads
+            ads_df = pd.DataFrame(google_ads_keywords)
+            display_ads = ads_df[['keyword', 'search_volume', 'cpc', 'competition_level', 'source_keyword']].copy()
+            display_ads.columns = ['Suggestion Ads', 'Volume', 'CPC', 'Concurrence', 'Basé sur']
+            display_ads['Volume'] = display_ads['Volume'].fillna(0).astype(int)
+            display_ads['CPC'] = display_ads['CPC'].fillna(0).round(2)
+            
+            # Trier par volume décroissant
+            display_ads = display_ads.sort_values('Volume', ascending=False)
+            
+            st.dataframe(display_ads, width='stretch')
+            
+            # Statistiques Google Ads
+            volumes_ads = display_ads['Volume'].tolist()
+            cpcs = display_ads['CPC'].tolist()
+            st.markdown("**Statistiques:**")
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Volume total", f"{sum(volumes_ads):,}")
+            with col2:
+                st.metric("Volume moyen", f"{sum(volumes_ads)/len(volumes_ads):.0f}")
+            with col3:
+                st.metric("CPC moyen", f"${sum(cpcs)/len(cpcs):.2f}")
+            with col4:
+                st.metric("Avec volume > 0", len([v for v in volumes_ads if v > 0]))
+        else:
+            st.info("Aucune suggestion Google Ads trouvée")
 
 def render_suggestions_only():
     """Affichage des suggestions uniquement"""
@@ -377,17 +509,154 @@ def render_suggestions_only():
     st.markdown("---")
     st.markdown("## 📊 Suggestions collectées")
     
-    # Métriques
+    # Métriques principales
     metrics = {
         "Mots-clés": len(metadata['keywords']),
         "Suggestions": len(results['all_suggestions']),
         "Niveaux": max(results.get('level_counts', {}).keys()) + 1 if results.get('level_counts') else 1
     }
+    
+    # Ajouter métriques DataForSEO si disponible
+    if results.get('enriched_keywords'):
+        enriched_keywords = results['enriched_keywords']
+        keywords_with_volume = [k for k in enriched_keywords if k.get('search_volume', 0) > 0]
+        ads_keywords = [k for k in enriched_keywords if k.get('source') == 'google_ads']
+        
+        metrics.update({
+            "Avec volume": len(keywords_with_volume),
+            "Suggestions Ads": len(ads_keywords)
+        })
+    
     render_metrics(metrics)
     
-    # Tableau des suggestions
+    # Tableau des suggestions avec volumes si disponible
     df = pd.DataFrame(results['all_suggestions'])
-    st.dataframe(df[['Mot-clé', 'Suggestion Google', 'Niveau', 'Parent']], use_container_width=True)
+    
+    # Si on a des données DataForSEO, les merger
+    if results.get('enriched_keywords'):
+        enriched_df = pd.DataFrame(results['enriched_keywords'])
+        if not enriched_df.empty and 'keyword' in enriched_df.columns:
+            # Merger les données
+            merged_df = df.merge(
+                enriched_df[['keyword', 'search_volume', 'cpc', 'competition_level', 'source']],
+                left_on='Suggestion Google',
+                right_on='keyword',
+                how='left'
+            )
+            
+            # Colonnes à afficher
+            display_cols = ['Mot-clé', 'Suggestion Google', 'Niveau', 'Parent', 'search_volume', 'cpc', 'competition_level', 'source']
+            available_cols = [col for col in display_cols if col in merged_df.columns]
+            
+            # Renommer les colonnes pour l'affichage
+            column_mapping = {
+                'search_volume': 'Volume',
+                'cpc': 'CPC',
+                'competition_level': 'Concurrence',
+                'source': 'Source'
+            }
+            
+            display_df = merged_df[available_cols].copy()
+            display_df = display_df.rename(columns=column_mapping)
+            
+            # Formater les colonnes numériques
+            if 'Volume' in display_df.columns:
+                display_df['Volume'] = display_df['Volume'].fillna(0).astype(int)
+            if 'CPC' in display_df.columns:
+                display_df['CPC'] = display_df['CPC'].fillna(0).round(2)
+            
+            # Remplacer les valeurs de source pour plus de clarté
+            if 'Source' in display_df.columns:
+                display_df['Source'] = display_df['Source'].fillna('google_suggest').replace({
+                    'google_suggest': '🔍 Google Suggest',
+                    'google_ads': '💰 Google Ads'
+                })
+            
+            st.dataframe(display_df, width='stretch')
+            
+            # Section dédiée aux suggestions Google Ads
+            ads_suggestions = results.get('dataforseo_data', {}).get('ads_suggestions', [])
+            if ads_suggestions:
+                st.markdown("### 💰 Suggestions Google Ads supplémentaires")
+                st.info(f"📈 {len(ads_suggestions)} suggestions publicitaires découvertes via DataForSEO")
+                
+                ads_df = pd.DataFrame(ads_suggestions)
+                ads_display_cols = ['keyword', 'search_volume', 'cpc', 'competition_level', 'source_keyword']
+                ads_available_cols = [col for col in ads_display_cols if col in ads_df.columns]
+                
+                if ads_available_cols:
+                    ads_display = ads_df[ads_available_cols].copy()
+                    ads_display.columns = ['Mot-clé Ads', 'Volume', 'CPC', 'Concurrence', 'Basé sur']
+                    
+                    # Formater les colonnes
+                    ads_display['Volume'] = ads_display['Volume'].fillna(0).astype(int)
+                    ads_display['CPC'] = ads_display['CPC'].fillna(0).round(2)
+                    
+                    # Filtrer pour n'afficher que ceux avec du volume
+                    ads_with_volume = ads_display[ads_display['Volume'] > 0].sort_values('Volume', ascending=False)
+                    
+                    if not ads_with_volume.empty:
+                        st.dataframe(ads_with_volume, width='stretch')
+                    else:
+                        st.info("Aucune suggestion Ads avec volume significatif trouvée")
+        else:
+            # Pas de données DataForSEO, affichage simple
+            st.dataframe(df[['Mot-clé', 'Suggestion Google', 'Niveau', 'Parent']], width='stretch')
+    else:
+        # Pas de données DataForSEO, affichage simple
+        st.dataframe(df[['Mot-clé', 'Suggestion Google', 'Niveau', 'Parent']], width='stretch')
+    
+    # Statistiques détaillées si DataForSEO activé
+    if results.get('enriched_keywords'):
+        st.markdown("### 📈 Analyse des volumes de recherche")
+        
+        enriched_keywords = results['enriched_keywords']
+        
+        # Statistiques par source
+        google_suggest_keywords = [k for k in enriched_keywords if k.get('source') == 'google_suggest']
+        google_ads_keywords = [k for k in enriched_keywords if k.get('source') == 'google_ads']
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### 🔍 Google Suggest")
+            if google_suggest_keywords:
+                volumes_suggest = [k.get('search_volume', 0) for k in google_suggest_keywords]
+                avg_volume_suggest = sum(volumes_suggest) / len(volumes_suggest)
+                max_volume_suggest = max(volumes_suggest)
+                
+                st.metric("Suggestions totales", len(google_suggest_keywords))
+                st.metric("Volume moyen", f"{avg_volume_suggest:.0f}")
+                st.metric("Volume maximum", f"{max_volume_suggest:,}")
+                
+                # Top suggestions Google Suggest avec volume
+                top_suggest = sorted(google_suggest_keywords, key=lambda x: x.get('search_volume', 0), reverse=True)[:5]
+                if top_suggest and top_suggest[0].get('search_volume', 0) > 0:
+                    st.markdown("**Top 5 suggestions Google:**")
+                    for i, kw in enumerate(top_suggest, 1):
+                        if kw.get('search_volume', 0) > 0:
+                            st.write(f"{i}. **{kw['keyword']}** - {kw['search_volume']:,} vol/mois")
+        
+        with col2:
+            st.markdown("#### 💰 Google Ads")
+            if google_ads_keywords:
+                volumes_ads = [k.get('search_volume', 0) for k in google_ads_keywords]
+                avg_volume_ads = sum(volumes_ads) / len(volumes_ads)
+                max_volume_ads = max(volumes_ads)
+                
+                st.metric("Suggestions Ads", len(google_ads_keywords))
+                st.metric("Volume moyen", f"{avg_volume_ads:.0f}")
+                st.metric("Volume maximum", f"{max_volume_ads:,}")
+                
+                # Top suggestions Google Ads avec volume
+                top_ads = sorted(google_ads_keywords, key=lambda x: x.get('search_volume', 0), reverse=True)[:5]
+                if top_ads and top_ads[0].get('search_volume', 0) > 0:
+                    st.markdown("**Top 5 suggestions Ads:**")
+                    for i, kw in enumerate(top_ads, 1):
+                        if kw.get('search_volume', 0) > 0:
+                            st.write(f"{i}. **{kw['keyword']}** - {kw['search_volume']:,} vol/mois - CPC: ${kw.get('cpc', 0):.2f}")
+            else:
+                st.info("Aucune suggestion Google Ads trouvée")
 
 def render_instructions_tab():
     """Onglet des instructions"""
