@@ -57,7 +57,8 @@ def create_excel_file(df: pd.DataFrame) -> BytesIO:
             'E': 20,  # Intention
             'F': 15,  # Importance
             'G': 15,  # Volume
-            'H': 12   # CPC
+            'H': 12,  # CPC
+            'I': 15   # Origine
         }
         
         for col, width in column_widths.items():
@@ -65,13 +66,25 @@ def create_excel_file(df: pd.DataFrame) -> BytesIO:
                 worksheet.column_dimensions[col].width = width
         
         # Formatage de l'en-tête
-        from openpyxl.styles import Font, PatternFill
+        from openpyxl.styles import Font, PatternFill, Alignment
         header_font = Font(bold=True, color="FFFFFF")
         header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+        center_alignment = Alignment(horizontal="center", vertical="center")
         
         for cell in worksheet[1]:
             cell.font = header_font
             cell.fill = header_fill
+            cell.alignment = center_alignment
+        
+        # Formatage conditionnel pour les volumes
+        if 'G' <= chr(ord('A') + len(df.columns) - 1):  # Si colonne Volume existe
+            from openpyxl.formatting.rule import DataBarRule
+            from openpyxl.styles import Color
+            
+            # Barre de données pour les volumes
+            rule = DataBarRule(start_type='min', start_value=0, end_type='max', end_value=None,
+                             color=Color(rgb='FF366092'))
+            worksheet.conditional_formatting.add(f'G2:G{len(df)+1}', rule)
     
     output.seek(0)
     return output

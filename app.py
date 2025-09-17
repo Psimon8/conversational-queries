@@ -213,16 +213,63 @@ def enrich_with_dataforseo(keywords, all_suggestions, dataforseo_config):
     )
 
 def analyze_themes(keywords, all_suggestions, enriched_data, question_generator, language):
-    """Analyse des thèmes"""
+    """Analyse des thèmes uniquement sur les mots-clés avec volume de recherche"""
     st.info("⏳ Analyse des thèmes...")
     
     themes_by_keyword = {}
+    
+    # Filtrer uniquement les mots-clés avec volume de recherche
+    enriched_keywords = enriched_data.get('enriched_keywords', [])
+    keywords_with_volume = [k for k in enriched_keywords if k.get('search_volume', 0) > 0]
+    
+    if not keywords_with_volume:
+        st.warning("⚠️ Aucun mot-clé avec volume de recherche trouvé pour l'analyse des thèmes")
+        return {}
+    
+    # Grouper par mot-clé principal d'origine
     for keyword in keywords:
-        keyword_suggestions = [s for s in all_suggestions if s['Mot-clé'] == keyword]
-        themes = question_generator.analyze_suggestions_themes(
-            keyword_suggestions, keyword, language
-        )
-        themes_by_keyword[keyword] = themes
+        # Trouver tous les mots-clés enrichis avec volume liés à ce mot-clé principal
+        related_keywords_with_volume = []
+        
+        # Mots-clés principaux avec volume
+        main_keyword_with_volume = [k for k in keywords_with_volume if k['keyword'].lower() == keyword.lower()]
+        related_keywords_with_volume.extend(main_keyword_with_volume)
+        
+        # Suggestions Google avec volume
+        for suggestion in all_suggestions:
+            if suggestion['Mot-clé'] == keyword and suggestion['Niveau'] > 0:
+                suggestion_with_volume = [k for k in keywords_with_volume if k['keyword'].lower() == suggestion['Suggestion Google'].lower()]
+                related_keywords_with_volume.extend(suggestion_with_volume)
+        
+        # Suggestions Ads avec volume (déjà filtrées car dans keywords_with_volume)
+        ads_suggestions = [k for k in keywords_with_volume if k.get('source') == 'google_ads']
+        for ads_suggestion in ads_suggestions:
+            # Associer les suggestions Ads aux mots-clés principaux
+            if any(kw.lower() in ads_suggestion.get('source_keyword', '').lower() or 
+                  ads_suggestion.get('source_keyword', '').lower() in kw.lower() 
+                  for kw in [keyword]):
+                if ads_suggestion not in related_keywords_with_volume:
+                    related_keywords_with_volume.append(ads_suggestion)
+        
+        if related_keywords_with_volume:
+            # Créer des suggestions fictives pour l'analyse des thèmes
+            fake_suggestions = [
+                {
+                    'Mot-clé': keyword,
+                    'Niveau': 1,
+                    'Suggestion Google': enriched_kw['keyword'],
+                    'Parent': keyword,
+                    'Search_Volume': enriched_kw.get('search_volume', 0),
+                    'CPC': enriched_kw.get('cpc', 0),
+                    'Competition': enriched_kw.get('competition_level', 'UNKNOWN')
+                }
+                for enriched_kw in related_keywords_with_volume
+                if enriched_kw['keyword'] != keyword  # Exclure le mot-clé principal
+            ]
+            
+            if fake_suggestions:
+                themes = question_generator.analyze_suggestions_themes(fake_suggestions, keyword, language)
+                themes_by_keyword[keyword] = themes
     
     return themes_by_keyword
 
@@ -276,72 +323,149 @@ def render_results_section(question_generator, analysis_options):
         render_suggestions_only()
 
 def render_theme_selection(question_generator, language):
-    """Interface de sélection des thèmes"""
+    """Interface de sélection des thèmes - uniquement pour mots-clés avec volume"""
     st.markdown("---")
     st.markdown("## 🎨 Sélection des thèmes")
+    
+    # Vérifier quels mots-clés ont du volume
+    results = st.session_state.analysis_results
+    enriched_keywords = results.get('enriched_keywords', [])
+    keywords_with_volume = [k['keyword'] for k in enriched_keywords if k.get('search_volume', 0) > 0]
+    
+    if not keywords_with_volume:
+        st.warning("⚠️ Aucun mot-clé avec volume de recherche trouvé. Impossible de générer des questions conversationnelles.")
+        return
+    
+    st.info(f"💡 Sélection des thèmes pour les mots-clés ayant du volume de recherche ({len(keywords_with_volume)} mots-clés)")
     
     themes_analysis = st.session_state.analysis_results.get('themes_analysis', {})
     selected_themes_by_keyword = {}
     
     for keyword, themes in themes_analysis.items():
         if themes:
-            st.markdown(f"### 🎯 Thèmes pour '{keyword}'")
+            # Vérifier si ce mot-clé a du volume (lui ou ses suggestions)
+            has_volume = False
             
-            cols = st.columns(2)
-            for i, theme in enumerate(themes):
-                with cols[i % 2]:
-                    theme_name = theme.get('nom', f'Thème {i+1}')
-                    is_selected = st.checkbox(
-                        f"**{theme_name}**",
-                        value=True,
-                        key=f"{keyword}_{theme_name}_{i}",
-                        help=f"Importance: {theme.get('importance', 3)}/5"
-                    )
-                    
-                    if is_selected:
-                        if keyword not in selected_themes_by_keyword:
-                            selected_themes_by_keyword[keyword] = []
-                        selected_themes_by_keyword[keyword].append(theme)
+            # Vérifier le mot-clé principal
+            if keyword in keywords_with_volume:
+                has_volume = True
+            
+            # Vérifier les suggestions associées
+            if not has_volume:
+                keyword_suggestions = [s['Suggestion Google'] for s in results.get('all_suggestions', []) 
+                                     if s['Mot-clé'] == keyword]
+                for suggestion in keyword_suggestions:
+                    if suggestion in keywords_with_volume:
+                        has_volume = True
+                        break
+            
+            if has_volume:
+                st.markdown(f"### 🎯 Thèmes pour '{keyword}' 📊 (avec volume de recherche)")
+                
+                cols = st.columns(2)
+                for i, theme in enumerate(themes):
+                    with cols[i % 2]:
+                        theme_name = theme.get('nom', f'Thème {i+1}')
+                        is_selected = st.checkbox(
+                            f"**{theme_name}**",
+                            value=True,
+                            key=f"{keyword}_{theme_name}_{i}",
+                            help=f"Importance: {theme.get('importance', 3)}/5"
+                        )
+                        
+                        if is_selected:
+                            if keyword not in selected_themes_by_keyword:
+                                selected_themes_by_keyword[keyword] = []
+                            selected_themes_by_keyword[keyword].append(theme)
+            else:
+                st.markdown(f"### ⚪ Thèmes pour '{keyword}' (sans volume de recherche - ignoré)")
+                st.caption("Ce mot-clé et ses suggestions n'ont pas de volume de recherche significatif")
     
     # Bouton de génération
     if selected_themes_by_keyword:
+        total_themes = sum(len(themes) for themes in selected_themes_by_keyword.values())
+        st.info(f"🎯 {total_themes} thèmes sélectionnés pour {len(selected_themes_by_keyword)} mots-clés avec volume")
+        
         if st.button("✨ Générer les questions", type="primary"):
             generate_questions_from_themes(
                 selected_themes_by_keyword, question_generator, language
             )
+    else:
+        st.warning("⚠️ Aucun thème sélectionné pour des mots-clés avec volume de recherche")
 
 def generate_questions_from_themes(selected_themes_by_keyword, question_generator, language):
-    """Génération des questions à partir des thèmes sélectionnés"""
+    """Génération des questions à partir des thèmes sélectionnés - uniquement pour mots-clés avec volume"""
     
     metadata = st.session_state.analysis_metadata
     final_questions_count = metadata.get('final_questions_count', 20)
     
+    # Filtrer les thèmes pour ne garder que ceux des mots-clés avec volume
+    results = st.session_state.analysis_results
+    enriched_keywords = results.get('enriched_keywords', [])
+    keywords_with_volume = [k['keyword'] for k in enriched_keywords if k.get('search_volume', 0) > 0]
+    
+    # Filtrer les thèmes sélectionnés
+    filtered_themes_by_keyword = {}
+    for keyword, themes in selected_themes_by_keyword.items():
+        # Vérifier si ce mot-clé ou ses suggestions ont du volume
+        has_volume = False
+        
+        # Vérifier le mot-clé principal
+        if keyword in keywords_with_volume:
+            has_volume = True
+        
+        # Vérifier les suggestions associées
+        if not has_volume:
+            keyword_suggestions = [s['Suggestion Google'] for s in results.get('all_suggestions', []) 
+                                 if s['Mot-clé'] == keyword]
+            for suggestion in keyword_suggestions:
+                if suggestion in keywords_with_volume:
+                    has_volume = True
+                    break
+        
+        if has_volume:
+            filtered_themes_by_keyword[keyword] = themes
+    
+    if not filtered_themes_by_keyword:
+        st.warning("⚠️ Aucun thème sélectionné ne correspond à des mots-clés avec volume de recherche")
+        return
+    
+    st.info(f"💡 Génération de questions pour {len(filtered_themes_by_keyword)} mots-clés avec volume de recherche")
+    
     all_questions_data = []
     
-    for keyword, themes in selected_themes_by_keyword.items():
+    for keyword, themes in filtered_themes_by_keyword.items():
         questions = question_generator.generate_questions_from_themes(
-            keyword, themes, final_questions_count // len(selected_themes_by_keyword), language
+            keyword, themes, final_questions_count // len(filtered_themes_by_keyword), language
         )
         
         for q in questions:
             q['Mot-clé'] = keyword
+            # Associer le volume de recherche si disponible
+            matching_keyword = next((k for k in enriched_keywords 
+                                   if k['keyword'].lower() == q.get('Suggestion Google', '').lower()), None)
+            if matching_keyword:
+                q['Volume_Recherche'] = matching_keyword.get('search_volume', 0)
+                q['CPC'] = matching_keyword.get('cpc', 0)
+                q['Source'] = matching_keyword.get('source', 'google_suggest')
+            
             all_questions_data.append(q)
     
-    # Tri et limitation
+    # Tri par volume de recherche puis par score d'importance
     sorted_questions = sorted(
         all_questions_data,
-        key=lambda x: x.get('Score_Importance', 0),
+        key=lambda x: (x.get('Volume_Recherche', 0), x.get('Score_Importance', 0)),
         reverse=True
     )[:final_questions_count]
     
     # Sauvegarde
     st.session_state.analysis_results.update({
         'final_consolidated_data': sorted_questions,
-        'selected_themes_by_keyword': selected_themes_by_keyword,
+        'selected_themes_by_keyword': filtered_themes_by_keyword,
         'stage': 'questions_generated'
     })
     
-    st.success(f"🎉 {len(sorted_questions)} questions générées!")
+    st.success(f"🎉 {len(sorted_questions)} questions générées à partir de mots-clés avec volume de recherche!")
     st.rerun()
 
 def render_final_results():
@@ -373,9 +497,15 @@ def render_final_results():
     
     render_metrics(metrics)
     
+    # Afficher la liste des mots-clés avec volume AVANT les questions
+    if results.get('enriched_keywords'):
+        render_keywords_with_volume_list(results)
+    
     # Tableau des questions avec volumes si disponible
     if results.get('final_consolidated_data'):
         st.markdown("### 📋 Questions conversationnelles")
+        st.info("💡 Ces questions sont générées uniquement à partir des mots-clés ayant un volume de recherche")
+        
         df = pd.DataFrame(results['final_consolidated_data'])
         
         # Si on a des données enrichies, essayer de les associer aux questions
@@ -384,13 +514,13 @@ def render_final_results():
             if not enriched_df.empty and 'keyword' in enriched_df.columns:
                 # Merger les données de volume avec les questions
                 merged_df = df.merge(
-                    enriched_df[['keyword', 'search_volume', 'cpc']],
+                    enriched_df[['keyword', 'search_volume', 'cpc', 'source']],
                     left_on='Suggestion Google',
                     right_on='keyword',
                     how='left'
                 )
                 
-                display_cols = ['Question Conversationnelle', 'Suggestion Google', 'Thème', 'Intention', 'Score_Importance', 'search_volume', 'cpc']
+                display_cols = ['Question Conversationnelle', 'Suggestion Google', 'Thème', 'Intention', 'Score_Importance', 'search_volume', 'cpc', 'source']
                 available_cols = [col for col in display_cols if col in merged_df.columns]
                 
                 display_df = merged_df[available_cols].copy()
@@ -398,7 +528,8 @@ def render_final_results():
                 # Renommer et formater les colonnes
                 column_mapping = {
                     'search_volume': 'Volume',
-                    'cpc': 'CPC'
+                    'cpc': 'CPC',
+                    'source': 'Origine'
                 }
                 display_df = display_df.rename(columns=column_mapping)
                 
@@ -406,6 +537,11 @@ def render_final_results():
                     display_df['Volume'] = display_df['Volume'].fillna(0).astype(int)
                 if 'CPC' in display_df.columns:
                     display_df['CPC'] = display_df['CPC'].fillna(0).round(2)
+                if 'Origine' in display_df.columns:
+                    display_df['Origine'] = display_df['Origine'].fillna('google_suggest').replace({
+                        'google_suggest': '🔍 Suggest',
+                        'google_ads': '💰 Ads'
+                    })
                 
                 st.dataframe(display_df, width='stretch')
             else:
@@ -423,6 +559,80 @@ def render_final_results():
     if results.get('enriched_keywords'):
         with st.expander("📈 Analyse détaillée des mots-clés et volumes"):
             render_detailed_keywords_analysis(results)
+
+def render_keywords_with_volume_list(results):
+    """Affichage de la liste des mots-clés avec volume de recherche utilisés pour les questions"""
+    st.markdown("### 🎯 Mots-clés avec volume de recherche")
+    st.info("📊 Ces mots-clés ont été utilisés pour générer les questions conversationnelles")
+    
+    enriched_keywords = results.get('enriched_keywords', [])
+    keywords_with_volume = [k for k in enriched_keywords if k.get('search_volume', 0) > 0]
+    
+    if not keywords_with_volume:
+        st.warning("⚠️ Aucun mot-clé avec volume de recherche trouvé")
+        return
+    
+    # Créer le DataFrame avec toutes les informations nécessaires
+    keywords_df = pd.DataFrame(keywords_with_volume)
+    
+    # Déterminer l'origine de chaque mot-clé
+    def determine_origin(row):
+        source = row.get('source', 'google_suggest')
+        keyword = row.get('keyword', '')
+        
+        # Vérifier si c'est un mot-clé principal (niveau 0)
+        all_suggestions = results.get('all_suggestions', [])
+        main_keywords = [s['Suggestion Google'] for s in all_suggestions if s['Niveau'] == 0]
+        
+        if keyword in main_keywords:
+            return "🎯 Mot-clé principal"
+        elif source == 'google_ads':
+            return "💰 Suggestion Ads"
+        else:
+            return "🔍 Suggestion Google"
+    
+    # Ajouter la colonne origine
+    keywords_df['Origine'] = keywords_df.apply(determine_origin, axis=1)
+    
+    # Préparer l'affichage
+    display_cols = ['keyword', 'search_volume', 'cpc', 'competition_level', 'Origine']
+    available_cols = [col for col in display_cols if col in keywords_df.columns]
+    
+    display_keywords = keywords_df[available_cols].copy()
+    display_keywords.columns = ['Mot-clé', 'Volume/mois', 'CPC', 'Concurrence', 'Origine']
+    
+    # Formater les colonnes
+    display_keywords['Volume/mois'] = display_keywords['Volume/mois'].fillna(0).astype(int)
+    display_keywords['CPC'] = display_keywords['CPC'].fillna(0).round(2)
+    
+    # Trier par volume décroissant
+    display_keywords = display_keywords.sort_values('Volume/mois', ascending=False)
+    
+    # Afficher avec mise en forme
+    st.dataframe(display_keywords, width='stretch')
+    
+    # Statistiques rapides
+    col1, col2, col3, col4 = st.columns(4)
+    
+    total_volume = display_keywords['Volume/mois'].sum()
+    avg_volume = display_keywords['Volume/mois'].mean()
+    max_volume = display_keywords['Volume/mois'].max()
+    avg_cpc = display_keywords['CPC'].mean()
+    
+    with col1:
+        st.metric("Volume total", f"{total_volume:,}")
+    with col2:
+        st.metric("Volume moyen", f"{avg_volume:.0f}")
+    with col3:
+        st.metric("Volume max", f"{max_volume:,}")
+    with col4:
+        st.metric("CPC moyen", f"${avg_cpc:.2f}")
+    
+    # Répartition par origine
+    origin_counts = display_keywords['Origine'].value_counts()
+    st.markdown("**Répartition par origine:**")
+    for origin, count in origin_counts.items():
+        st.write(f"- {origin}: {count} mots-clés")
 
 def render_detailed_keywords_analysis(results):
     """Affichage détaillé de l'analyse des mots-clés"""
