@@ -81,20 +81,20 @@ class ExportManager:
         """Export des suggestions Google"""
         suggestions_df = pd.DataFrame(self.results['all_suggestions'])
         
-        # Enrichir avec données DataForSEO si disponibles
+        # Enrichir avec données DataForSEO si disponibles (version dédupliquée)
         if 'enriched_keywords' in self.results:
             enriched_df = pd.DataFrame(self.results['enriched_keywords'])
             if not enriched_df.empty and 'keyword' in enriched_df.columns:
                 # Merger les données
                 merged_df = suggestions_df.merge(
-                    enriched_df[['keyword', 'search_volume', 'cpc', 'competition_level', 'source']],
+                    enriched_df[['keyword', 'search_volume', 'cpc', 'competition_level', 'origine']],
                     left_on='Suggestion Google',
                     right_on='keyword',
                     how='left'
                 )
                 
-                export_cols = ['Mot-clé', 'Suggestion Google', 'Niveau', 'Parent', 'search_volume', 'cpc', 'competition_level', 'source']
-                export_names = ['Mot-clé', 'Suggestion Google', 'Niveau', 'Parent', 'Volume', 'CPC', 'Concurrence', 'Source']
+                export_cols = ['Mot-clé', 'Suggestion Google', 'Niveau', 'Parent', 'search_volume', 'cpc', 'competition_level', 'origine']
+                export_names = ['Mot-clé', 'Suggestion Google', 'Niveau', 'Parent', 'Volume', 'CPC', 'Concurrence', 'Origine']
                 
                 # Garder seulement les colonnes existantes
                 existing_cols = [col for col in export_cols if col in merged_df.columns]
@@ -108,11 +108,6 @@ class ExportManager:
                     suggestions_display['Volume'] = suggestions_display['Volume'].fillna(0).astype(int)
                 if 'CPC' in suggestions_display.columns:
                     suggestions_display['CPC'] = suggestions_display['CPC'].fillna(0).round(2)
-                if 'Source' in suggestions_display.columns:
-                    suggestions_display['Source'] = suggestions_display['Source'].fillna('Google Suggest').replace({
-                        'google_suggest': 'Google Suggest',
-                        'google_ads': 'Google Ads'
-                    })
             else:
                 suggestions_display = suggestions_df[['Mot-clé', 'Suggestion Google', 'Niveau', 'Parent']].copy()
         else:
@@ -128,28 +123,25 @@ class ExportManager:
             width='stretch'
         )
         
-        # Export séparé pour les suggestions Google Ads si disponibles
-        ads_suggestions = self.results.get('dataforseo_data', {}).get('ads_suggestions', [])
-        if ads_suggestions:
-            ads_df = pd.DataFrame(ads_suggestions)
-            ads_display_cols = ['keyword', 'search_volume', 'cpc', 'competition_level', 'source_keyword']
-            ads_available_cols = [col for col in ads_display_cols if col in ads_df.columns]
-            
-            if ads_available_cols:
-                ads_export = ads_df[ads_available_cols].copy()
-                ads_export.columns = ['Suggestion Ads', 'Volume', 'CPC', 'Concurrence', 'Mot-clé source']
+        # Export séparé pour les mots-clés dédupliqués avec volumes
+        if self.results.get('enriched_keywords'):
+            keywords_with_volume = [k for k in self.results['enriched_keywords'] if k.get('search_volume', 0) > 0]
+            if keywords_with_volume:
+                volume_df = pd.DataFrame(keywords_with_volume)
+                volume_display = volume_df[['keyword', 'search_volume', 'cpc', 'competition_level', 'origine']].copy()
+                volume_display.columns = ['Mot-clé', 'Volume', 'CPC', 'Concurrence', 'Origine']
                 
                 # Formater les colonnes
-                ads_export['Volume'] = ads_export['Volume'].fillna(0).astype(int)
-                ads_export['CPC'] = ads_export['CPC'].fillna(0).round(2)
+                volume_display['Volume'] = volume_display['Volume'].fillna(0).astype(int)
+                volume_display['CPC'] = volume_display['CPC'].fillna(0).round(2)
                 
-                ads_excel = create_excel_file(ads_export)
+                volume_excel = create_excel_file(volume_display)
                 st.sidebar.download_button(
-                    label="💰 Suggestions Ads (Excel)",
-                    data=ads_excel,
-                    file_name="suggestions_google_ads.xlsx",
+                    label="📊 Mots-clés avec volume (Excel)",
+                    data=volume_excel,
+                    file_name="mots_cles_volumes.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="download_ads_excel",
+                    key="download_volume_excel",
                     width='stretch'
                 )
 
@@ -187,6 +179,14 @@ class ExportManager:
         stage = self.results.get('stage', 'unknown')
         generate_questions = self.metadata.get('generate_questions', False)
         
+        if stage == 'themes_analyzed' and generate_questions:
+            st.sidebar.info("📋 Sélectionnez vos thèmes")
+        elif stage == 'questions_generated':
+            st.sidebar.success("✅ Questions générées")
+        elif self.results.get('all_suggestions'):
+            st.sidebar.success("✅ Suggestions collectées")
+        else:
+            st.sidebar.info("⏳ En attente d'analyse")
         if stage == 'themes_analyzed' and generate_questions:
             st.sidebar.info("📋 Sélectionnez vos thèmes")
         elif stage == 'questions_generated':
