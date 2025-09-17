@@ -11,8 +11,8 @@ from plotly.subplots import make_subplots
 import plotly.express as px
 from io import BytesIO
 
-# Import du module analytics
-from analytics import analytics
+# Import du module de génération de questions
+from question_generator import QuestionGenerator
 
 # Configuration de la page Streamlit
 st.set_page_config(
@@ -21,16 +21,11 @@ st.set_page_config(
     layout="wide"
 )
 
-# Initialisation du session state et tracking
+# Initialisation du session state
 if 'analysis_results' not in st.session_state:
     st.session_state.analysis_results = None
 if 'analysis_metadata' not in st.session_state:
     st.session_state.analysis_metadata = None
-if 'current_query_id' not in st.session_state:
-    st.session_state.current_query_id = None
-
-# Démarrer le tracking de session
-analytics.track_event("page_load")
 
 # Titre principal
 st.title("🔍 Optimiseur de Requêtes Conversationnelles SEO")
@@ -43,10 +38,12 @@ api_key = st.sidebar.text_input("Clé API OpenAI", type="password", help="Votre 
 if api_key:
     client = OpenAI(api_key=api_key)
     st.sidebar.success("✅ API configurée")
-    analytics.track_event("api_configured")
+    # Initialiser le générateur de questions avec le client
+    question_generator = QuestionGenerator(client)
 else:
     st.sidebar.warning("⚠️ Veuillez entrer votre clé API OpenAI")
     client = None
+    question_generator = QuestionGenerator()
 
 # Options de génération dans la sidebar
 st.sidebar.header("🎯 Options d'analyse")
@@ -96,39 +93,7 @@ st.sidebar.markdown(
     unsafe_allow_html=True
 )
 
-# Fonctions utilitaires communes
-def call_gpt4o_mini(prompt, max_retries=3):
-    """Appel à l'API GPT-4o mini avec gestion d'erreurs"""
-    if not client:
-        st.error("❌ Clé API manquante")
-        return None
-    
-    for attempt in range(max_retries):
-        try:
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "Tu es un expert SEO spécialisé dans l'analyse des requêtes conversationnelles et l'optimisation pour les moteurs de recherche."
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                max_tokens=1500,
-                temperature=0.3
-            )
-            return response.choices[0].message.content.strip()
-        except Exception as e:
-            if attempt < max_retries - 1:
-                time.sleep(2 ** attempt)
-                continue
-            else:
-                st.error(f"❌ Erreur API après {max_retries} tentatives: {str(e)}")
-                return None
-
+# Fonctions utilitaires pour les suggestions Google
 def get_google_suggestions(keyword, lang='fr', max_suggestions=10):
     """Récupère les suggestions Google pour un mot-clé"""
     url = "https://suggestqueries.google.com/complete/search"
@@ -148,38 +113,75 @@ def get_google_suggestions(keyword, lang='fr', max_suggestions=10):
         st.error(f"❌ Erreur lors de la récupération des suggestions pour '{keyword}': {str(e)}")
         return []
 
-def extract_questions_from_response(response_text):
-    """Extrait les questions d'une réponse de GPT"""
-    if not response_text:
-        return []
+def get_google_suggestions_multilevel(keyword, lang='fr', level1_count=10, level2_count=5, level3_count=0, enable_level2=True, enable_level3=False):
+    """Récupère les suggestions Google à plusieurs niveaux"""
+    all_suggestions = []
+    processed_suggestions = set()  # Pour éviter les doublons
     
-    patterns = [
-        r'^\d+\.?\s*["\']?([^"\']+\?)["\']?',  # Format numéroté avec ?
-        r'^-\s*["\']?([^"\']+\?)["\']?',       # Format avec tirets avec ?
-        r'^•\s*["\']?([^"\']+\?)["\']?'        # Format avec puces avec ?
-    ]
+    # Ajouter le mot-clé de base (niveau 0)
+    all_suggestions.append({
+        'Mot-clé': keyword,
+        'Niveau': 0,
+        'Suggestion Google': keyword,
+        'Parent': None
+    })
+    processed_suggestions.add(keyword.lower().strip())
     
-    questions = []
-    lines = response_text.split('\n')
+    # Niveau 1: Suggestions directes du mot-clé
+    level1_suggestions = get_google_suggestions(keyword, lang, level1_count)
     
-    for line in lines:
-        line = line.strip()
-        if not line or not line.endswith('?'):
-            continue
-            
-        for pattern in patterns:
-            match = re.match(pattern, line, re.MULTILINE)
-            if match:
-                question = match.group(1).strip()
-                if len(question) > 10:
-                    questions.append(question)
-                break
-        else:
-            # Si aucun pattern ne correspond mais que la ligne se termine par ?
-            if line.endswith('?') and len(line) > 10:
-                questions.append(line)
+    for suggestion in level1_suggestions:
+        normalized = suggestion.lower().strip()
+        if normalized not in processed_suggestions:
+            all_suggestions.append({
+                'Mot-clé': keyword,
+                'Niveau': 1,
+                'Suggestion Google': suggestion,
+                'Parent': keyword
+            })
+            processed_suggestions.add(normalized)
     
-    return questions
+    # Niveau 2: Suggestions des suggestions (si activé)
+    if enable_level2:
+        level2_parents = []
+        for suggestion_data in all_suggestions.copy():  # Copie pour éviter la modification pendant l'itération
+            if suggestion_data['Niveau'] == 1:  # Traiter uniquement les suggestions de niveau 1
+                level2_suggestions = get_google_suggestions(suggestion_data['Suggestion Google'], lang, level2_count)
+                
+                for l2_suggestion in level2_suggestions:
+                    normalized = l2_suggestion.lower().strip()
+                    if normalized not in processed_suggestions:
+                        new_suggestion = {
+                            'Mot-clé': keyword,
+                            'Niveau': 2,
+                            'Suggestion Google': l2_suggestion,
+                            'Parent': suggestion_data['Suggestion Google']
+                        }
+                        all_suggestions.append(new_suggestion)
+                        level2_parents.append(new_suggestion)
+                        processed_suggestions.add(normalized)
+                
+                time.sleep(0.3)  # Délai entre les requêtes pour éviter le rate limiting
+        
+        # Niveau 3: Suggestions des suggestions de niveau 2 (si activé)
+        if enable_level3:
+            for suggestion_data in level2_parents:  # Traiter uniquement les suggestions de niveau 2
+                level3_suggestions = get_google_suggestions(suggestion_data['Suggestion Google'], lang, level3_count)
+                
+                for l3_suggestion in level3_suggestions:
+                    normalized = l3_suggestion.lower().strip()
+                    if normalized not in processed_suggestions:
+                        all_suggestions.append({
+                            'Mot-clé': keyword,
+                            'Niveau': 3,
+                            'Suggestion Google': l3_suggestion,
+                            'Parent': suggestion_data['Suggestion Google']
+                        })
+                        processed_suggestions.add(normalized)
+                
+                time.sleep(0.3)  # Délai entre les requêtes pour éviter le rate limiting
+    
+    return all_suggestions
 
 def consolidate_and_deduplicate(questions_data, target_count):
     """Consolide et déduplique les questions en gardant les plus pertinentes"""
@@ -261,7 +263,6 @@ def create_excel_file(df):
 if 'analysis_results' in st.session_state and st.session_state.analysis_results is not None:
     results = st.session_state.analysis_results
     metadata = st.session_state.analysis_metadata
-    query_id = st.session_state.current_query_id
     
     st.sidebar.header("📤 Export des résultats")
     
@@ -272,30 +273,28 @@ if 'analysis_results' in st.session_state and st.session_state.analysis_results 
         excel_display.columns = ['Questions Conversationnelles', 'Mot-clé', 'Thème', 'Intention', 'Importance']
         
         excel_file = create_excel_file(excel_display)
-        if st.sidebar.download_button(
+        st.sidebar.download_button(
             label="📊 Questions (Excel)",
             data=excel_file,
             file_name="questions_conversationnelles_themes.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key="download_questions_themes_excel",
             use_container_width=True
-        ):
-            analytics.track_export(query_id, "questions_excel", "questions_conversationnelles_themes.xlsx")
+        )
     
     # Export Excel des suggestions
     if len(results['all_suggestions']) > 0:
         suggestions_df = pd.DataFrame(results['all_suggestions'])
         suggestions_display = suggestions_df[['Mot-clé', 'Suggestion Google', 'Niveau', 'Parent']].copy()
         suggestions_excel = create_excel_file(suggestions_display)
-        if st.sidebar.download_button(
+        st.sidebar.download_button(
             label="🔍 Suggestions (Excel)",
             data=suggestions_excel,
             file_name="suggestions_google_multiniveaux.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key="download_suggestions_excel",
             use_container_width=True
-        ):
-            analytics.track_export(query_id, "suggestions_excel", "suggestions_google_multiniveaux.xlsx")
+        )
     
     # Export JSON complet
     export_json = {
@@ -309,85 +308,14 @@ if 'analysis_results' in st.session_state and st.session_state.analysis_results 
     }
     
     json_data = json.dumps(export_json, ensure_ascii=False, indent=2)
-    if st.sidebar.download_button(
+    st.sidebar.download_button(
         label="📋 Données (JSON)",
         data=json_data,
         file_name="analyse_complete_multiniveaux.json",
         mime="application/json",
         key="download_json",
         use_container_width=True
-    ):
-        analytics.track_export(query_id, "data_json", "analyse_complete_multiniveaux.json")
-
-def get_google_suggestions_multilevel(keyword, lang='fr', level1_count=10, level2_count=5, level3_count=0, enable_level2=True, enable_level3=False):
-    """Récupère les suggestions Google à plusieurs niveaux"""
-    all_suggestions = []
-    processed_suggestions = set()  # Pour éviter les doublons
-    
-    # Ajouter le mot-clé de base (niveau 0)
-    all_suggestions.append({
-        'Mot-clé': keyword,
-        'Niveau': 0,
-        'Suggestion Google': keyword,
-        'Parent': None
-    })
-    processed_suggestions.add(keyword.lower().strip())
-    
-    # Niveau 1: Suggestions directes du mot-clé
-    level1_suggestions = get_google_suggestions(keyword, lang, level1_count)
-    
-    for suggestion in level1_suggestions:
-        normalized = suggestion.lower().strip()
-        if normalized not in processed_suggestions:
-            all_suggestions.append({
-                'Mot-clé': keyword,
-                'Niveau': 1,
-                'Suggestion Google': suggestion,
-                'Parent': keyword
-            })
-            processed_suggestions.add(normalized)
-    
-    # Niveau 2: Suggestions des suggestions (si activé)
-    if enable_level2:
-        level2_parents = []
-        for suggestion_data in all_suggestions.copy():  # Copie pour éviter la modification pendant l'itération
-            if suggestion_data['Niveau'] == 1:  # Traiter uniquement les suggestions de niveau 1
-                level2_suggestions = get_google_suggestions(suggestion_data['Suggestion Google'], lang, level2_count)
-                
-                for l2_suggestion in level2_suggestions:
-                    normalized = l2_suggestion.lower().strip()
-                    if normalized not in processed_suggestions:
-                        new_suggestion = {
-                            'Mot-clé': keyword,
-                            'Niveau': 2,
-                            'Suggestion Google': l2_suggestion,
-                            'Parent': suggestion_data['Suggestion Google']
-                        }
-                        all_suggestions.append(new_suggestion)
-                        level2_parents.append(new_suggestion)
-                        processed_suggestions.add(normalized)
-                
-                time.sleep(0.3)  # Délai entre les requêtes pour éviter le rate limiting
-        
-        # Niveau 3: Suggestions des suggestions de niveau 2 (si activé)
-        if enable_level3:
-            for suggestion_data in level2_parents:  # Traiter uniquement les suggestions de niveau 2
-                level3_suggestions = get_google_suggestions(suggestion_data['Suggestion Google'], lang, level3_count)
-                
-                for l3_suggestion in level3_suggestions:
-                    normalized = l3_suggestion.lower().strip()
-                    if normalized not in processed_suggestions:
-                        all_suggestions.append({
-                            'Mot-clé': keyword,
-                            'Niveau': 3,
-                            'Suggestion Google': l3_suggestion,
-                            'Parent': suggestion_data['Suggestion Google']
-                        })
-                        processed_suggestions.add(normalized)
-                
-                time.sleep(0.3)  # Délai entre les requêtes pour éviter le rate limiting
-    
-    return all_suggestions
+    )
 
 def analyze_suggestion_relevance(keyword, suggestion, level):
     """Analyse la pertinence d'une suggestion par rapport au mot-clé principal"""
@@ -479,12 +407,12 @@ def generate_contextual_questions(keyword, suggestion, analysis_data, num_questi
     Score de pertinence : {relevance}/10
     
     Génère EXACTEMENT {num_questions} questions conversationnelles SEO optimisées qui :
-    1. Sont adaptées à la catégorie "{category}" et l'intention "{intent}"
-    2. Intègrent naturellement le contexte de la suggestion
-    3. Sont formulées comme des questions que les utilisateurs poseraient vraiment
-    4. Sont optimisées pour la recherche vocale
-    5. Se terminent par un point d'interrogation
-    6. Sont de longueur appropriée (ni trop courtes, ni trop longues)
+    Sont adaptées à la catégorie "{category}" et l'intention "{intent}"
+    Intègrent naturellement le contexte de la suggestion
+    Sont formulées comme des questions que les utilisateurs poseraient vraiment
+    Sont optimisées pour la recherche vocale
+    Se terminent par un point d'interrogation
+    Sont de longueur appropriée (ni trop courtes, ni trop longues)
     
     Exemples de formulations selon l'intention :
     - Informational : "Comment...", "Pourquoi...", "Qu'est-ce que..."
@@ -736,8 +664,8 @@ def generate_questions_from_themes(keyword, themes, target_count):
     
     return all_questions
 
-# Création des onglets avec ajout de l'onglet Analytics
-tab1, tab2, tab3 = st.tabs(["🔍 Analyseur de Requêtes", "📊 Analytics", "📖 Instructions"])
+# Création des onglets
+tab1, tab2 = st.tabs(["🔍 Analyseur de Requêtes", "📖 Instructions"])
 
 # TAB 1: Analyseur principal
 with tab1:
@@ -786,7 +714,6 @@ with tab1:
     col_analyze, col_clear = st.columns([4, 1])
     with col_analyze:
         if keywords_input:
-            # Vérifier la clé API seulement si la génération de questions est activée
             if generate_questions and not api_key:
                 st.warning("⚠️ Veuillez configurer votre clé API OpenAI dans la barre latérale pour générer les questions conversationnelles.")
             elif keywords_input:
@@ -796,23 +723,6 @@ with tab1:
                     if not keywords:
                         st.error("❌ Veuillez entrer au moins un mot-clé")
                     else:
-                        # Tracking de début d'analyse
-                        start_time = time.time()
-                        analysis_config = {
-                            'api_configured': api_key is not None,
-                            'language': lang,
-                            'level1_count': level1_count,
-                            'level2_count': level2_count,
-                            'level3_count': level3_count,
-                            'generate_questions': generate_questions,
-                            'target_questions': final_questions_count if generate_questions else 0
-                        }
-                        
-                        analytics.track_event("analysis_started", {
-                            'keywords_count': len(keywords),
-                            'config': analysis_config
-                        })
-                        
                         # Réinitialiser les résultats précédents
                         st.session_state.analysis_results = None
                         st.session_state.analysis_metadata = None
@@ -827,8 +737,8 @@ with tab1:
                             enable_level3 = level3_count > 0 and enable_level2
                             
                             # Étape 1: Collecte des suggestions multi-niveaux
-                            total_steps = 3 if generate_questions else 2
-                            status_text.text("⏳ Étape 1/{}: Collecte des suggestions Google multi-niveaux...".format(total_steps))
+                            total_steps = 4 if generate_questions else 2
+                            status_text.text(f"⏳ Étape 1/{total_steps}: Collecte des suggestions Google multi-niveaux...")
                             
                             all_suggestions = []
                             
@@ -864,18 +774,18 @@ with tab1:
                                 
                                 if generate_questions:
                                     # Étape 2: Analyse des thèmes récurrents
-                                    status_text.text("⏳ Étape 2/4: Analyse des thèmes récurrents dans les suggestions...")
+                                    status_text.text(f"⏳ Étape 2/{total_steps}: Analyse des thèmes récurrents dans les suggestions...")
                                     progress_bar.progress(50)
                                     
-                                    # Analyser les thèmes pour chaque mot-clé
+                                    # Analyser les thèmes pour chaque mot-clé avec le générateur ET la langue
                                     for keyword in keywords:
                                         keyword_suggestions = [s for s in all_suggestions if s['Mot-clé'] == keyword]
-                                        themes = analyze_suggestions_themes(keyword_suggestions, keyword)
+                                        themes = question_generator.analyze_suggestions_themes(keyword_suggestions, keyword, lang)
                                         all_themes[keyword] = themes
                                         time.sleep(1)  # Délai pour éviter le rate limiting
                                     
                                     # Étape 3: Génération intelligente des questions
-                                    status_text.text("⏳ Étape 3/4: Génération des questions conversationnelles par thème...")
+                                    status_text.text(f"⏳ Étape 3/{total_steps}: Génération des questions conversationnelles par thème...")
                                     progress_bar.progress(70)
                                     
                                     all_questions_data = []
@@ -892,10 +802,11 @@ with tab1:
                                         if keyword_questions > 0:
                                             themes = all_themes.get(keyword, [])
                                             if themes:
-                                                keyword_questions_list = generate_questions_from_themes(
+                                                keyword_questions_list = question_generator.generate_questions_from_themes(
                                                     keyword, 
                                                     themes, 
-                                                    keyword_questions
+                                                    keyword_questions,
+                                                    lang  # Passer la langue sélectionnée
                                                 )
                                                 
                                                 for q in keyword_questions_list:
@@ -914,7 +825,7 @@ with tab1:
                                         st.info(f"✅ {len(all_questions_data)} questions conversationnelles générées à partir des thèmes")
                                         
                                         # Étape 4: Finalisation
-                                        status_text.text("⏳ Étape 4/4: Finalisation...")
+                                        status_text.text(f"⏳ Étape 4/{total_steps}: Finalisation...")
                                         progress_bar.progress(90)
                                         
                                         # Trier par score d'importance et limiter au nombre demandé
@@ -950,45 +861,17 @@ with tab1:
                                     'timestamp': time.strftime("%Y-%m-%d %H:%M:%S")
                                 }
                                 
-                                # Tracking de succès
-                                processing_time = time.time() - start_time
-                                query_id = analytics.track_query(
-                                    keywords, 
-                                    analysis_config, 
-                                    st.session_state.analysis_results,
-                                    processing_time
-                                )
-                                st.session_state.current_query_id = query_id
-                                
-                                analytics.track_event("analysis_completed", {
-                                    'processing_time': processing_time,
-                                    'suggestions_found': len(all_suggestions),
-                                    'questions_generated': len(final_consolidated_data) if generate_questions else 0
-                                })
-                                
                                 # Nettoyer les éléments temporaires
                                 progress_bar.empty()
                                 status_text.empty()
                         
                         except Exception as e:
-                            # Tracking d'erreur
-                            processing_time = time.time() - start_time
-                            analytics.track_query(
-                                keywords, 
-                                analysis_config, 
-                                None,
-                                processing_time,
-                                error=str(e)
-                            )
-                            analytics.track_event("analysis_error", {'error': str(e)})
                             st.error(f"❌ Erreur lors de l'analyse: {str(e)}")
 
     with col_clear:
         if st.button("🗑️ Effacer", help="Effacer les résultats actuels"):
-            analytics.track_event("results_cleared")
             st.session_state.analysis_results = None
             st.session_state.analysis_metadata = None
-            st.session_state.current_query_id = None
             st.rerun()
     
     # Affichage des résultats sauvegardés
@@ -1099,36 +982,8 @@ with tab1:
             for keyword, count in keyword_counts.items():
                 st.markdown(f"- {keyword}: {count} suggestions")
 
-# TAB 2: Analytics Dashboard
+# TAB 2: Instructions d'utilisation
 with tab2:
-    analytics.create_dashboard()
-    
-    # Options d'export des analytics
-    st.markdown("### 📤 Export des données d'analytics")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        days_filter = st.selectbox(
-            "Période d'analyse",
-            [7, 30, 90, 365],
-            index=1,
-            format_func=lambda x: f"{x} derniers jours"
-        )
-    
-    with col2:
-        if st.button("📊 Exporter analytics (Excel)"):
-            analytics_data = analytics.export_analytics_data(days_filter)
-            st.download_button(
-                label="💾 Télécharger le rapport",
-                data=analytics_data,
-                file_name=f"analytics_rapport_{days_filter}j.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-            analytics.track_event("analytics_exported", {'days': days_filter})
-
-# TAB 3: Instructions d'utilisation
-with tab3:
     st.markdown("""
     # 📖 Instructions d'utilisation
     
@@ -1151,7 +1006,7 @@ with tab3:
     ## ⚙️ Fonctionnalités principales
     
     - **Collecte automatique** des suggestions Google réelles
-    - **Génération intelligente** de 10 questions par suggestion
+    - **Génération intelligente** de questions par thème
     - **Consolidation avancée** avec déduplication et scoring
     - **Export professionnel** en Excel et JSON
     
@@ -1223,8 +1078,3 @@ with tab3:
 # Footer
 st.markdown("---")
 st.markdown("*Outil d'optimisation SEO pour requêtes conversationnelles | Powered by GPT-4o mini & Streamlit*")
-
-# Tracking de fin de session au nettoyage
-if st.session_state.get('cleanup', False):
-    analytics.end_session()
-    analytics.end_session()
