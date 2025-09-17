@@ -777,214 +777,244 @@ with tab1:
             help="Nombre de suggestions pour chaque suggestion de niveau 2 (0 = désactivé)"
         )
     
+    # Estimation des coûts DataForSEO
+    if enable_dataforseo and keywords_input:
+        keywords = [kw.strip() for kw in keywords_input.split('\n') if kw.strip()]
+        if keywords:
+            # Estimer le nombre total de mots-clés après suggestions Google
+            estimated_suggestions = len(keywords) * (1 + level1_count + (level2_count if level2_count > 0 else 0))
+            
+            cost_estimate = dataforseo_client.estimate_cost(estimated_suggestions, True)
+            
+            with st.expander("💰 Estimation des coûts DataForSEO"):
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Mots-clés estimés", f"{cost_estimate['keywords_count']:,}")
+                with col2:
+                    st.metric("Coût volumes", f"${cost_estimate['search_volume_cost']:.2f}")
+                with col3:
+                    st.metric("Coût total estimé", f"${cost_estimate['total_cost']:.2f}")
+
     # Boutons d'action
     col_analyze, col_clear = st.columns([4, 1])
     with col_analyze:
         if keywords_input:
-            if generate_questions and not api_key:
-                st.warning("⚠️ Veuillez configurer votre clé API OpenAI dans la barre latérale pour générer les questions conversationnelles.")
-            elif keywords_input:
-                keywords = [kw.strip() for kw in keywords_input.split('\n') if kw.strip()]
-                
-                # Étape 1: Analyse des suggestions et thèmes
-                if st.button("🚀 Analyser les suggestions", type="primary"):
-                    if not keywords:
-                        st.error("❌ Veuillez entrer au moins un mot-clé")
+            keywords = [kw.strip() for kw in keywords_input.split('\n') if kw.strip()]
+            
+            # Toujours afficher le bouton si on a des mots-clés
+            if st.button("🚀 Analyser les suggestions", type="primary"):
+                if not keywords:
+                    st.error("❌ Veuillez entrer au moins un mot-clé")
+                else:
+                    # Vérifier si on peut générer des questions
+                    if generate_questions and not api_key:
+                        st.warning("⚠️ API OpenAI requise pour la génération de questions. L'analyse des suggestions sera effectuée sans génération de questions.")
+                        # Continuer avec generate_questions = False pour cette session
+                        current_generate_questions = False
                     else:
-                        # Réinitialiser les résultats précédents
-                        st.session_state.analysis_results = None
-                        st.session_state.analysis_metadata = None
-                        st.session_state.themes_selection = None
+                        current_generate_questions = generate_questions
+                    
+                    # Réinitialiser les résultats précédents
+                    st.session_state.analysis_results = None
+                    st.session_state.analysis_metadata = None
+                    st.session_state.themes_selection = None
+                    
+                    try:
+                        # Progress tracking
+                        progress_bar = st.progress(0)
+                        status_text = st.empty()
                         
-                        try:
-                            # Progress tracking
-                            progress_bar = st.progress(0)
-                            status_text = st.empty()
+                        # Déterminer les niveaux activés
+                        enable_level2 = level2_count > 0
+                        enable_level3 = level3_count > 0 and enable_level2
+                        
+                        # Étape 1: Collecte des suggestions multi-niveaux
+                        total_steps = 5 if current_generate_questions else 3
+                        status_text.text(f"⏳ Étape 1/{total_steps}: Collecte des suggestions Google multi-niveaux...")
+                        
+                        all_suggestions = []
+                        
+                        for i, keyword in enumerate(keywords):
+                            keyword_suggestions = get_google_suggestions_multilevel(
+                                keyword, 
+                                lang, 
+                                level1_count, 
+                                level2_count, 
+                                level3_count,
+                                enable_level2,
+                                enable_level3
+                            )
+                            all_suggestions.extend(keyword_suggestions)
                             
-                            # Déterminer les niveaux activés
-                            enable_level2 = level2_count > 0
-                            enable_level3 = level3_count > 0 and enable_level2
+                            progress_bar.progress((i + 1) * 20 // len(keywords))
+                            status_text.text(f"⏳ Collecte en cours... {len(all_suggestions)} suggestions trouvées")
+                        
+                        if not all_suggestions:
+                            st.error("❌ Aucune suggestion trouvée")
+                        else:
+                            # Affichage des statistiques de collecte
+                            level_counts = {}
+                            for suggestion in all_suggestions:
+                                level = suggestion['Niveau']
+                                level_counts[level] = level_counts.get(level, 0) + 1
                             
-                            # Étape 1: Collecte des suggestions multi-niveaux
-                            status_text.text("⏳ Étape 1/5: Collecte des suggestions Google multi-niveaux...")
+                            st.info(f"✅ {len(all_suggestions)} suggestions collectées - Niveau 0: {level_counts.get(0, 0)}, Niveau 1: {level_counts.get(1, 0)}, Niveau 2: {level_counts.get(2, 0)}, Niveau 3: {level_counts.get(3, 0)}")
                             
-                            all_suggestions = []
+                            # Nouvelles étapes DataForSEO
+                            enriched_data = {}
+                            all_enriched_keywords = []
                             
-                            for i, keyword in enumerate(keywords):
-                                keyword_suggestions = get_google_suggestions_multilevel(
-                                    keyword, 
-                                    lang, 
-                                    level1_count, 
-                                    level2_count, 
-                                    level3_count,
-                                    enable_level2,
-                                    enable_level3
+                            if enable_dataforseo and dataforseo_login and dataforseo_password:
+                                # Étape 2: Enrichissement DataForSEO
+                                status_text.text(f"⏳ Étape 2/{total_steps}: Enrichissement avec DataForSEO...")
+                                progress_bar.progress(40)
+                                
+                                # Extraire tous les mots-clés et suggestions
+                                initial_keywords = keywords
+                                suggestion_texts = [s['Suggestion Google'] for s in all_suggestions if s['Niveau'] > 0]
+                                
+                                enriched_data = dataforseo_client.process_keywords_complete(
+                                    initial_keywords,
+                                    suggestion_texts,
+                                    dataforseo_language,
+                                    dataforseo_location,
+                                    min_search_volume
                                 )
-                                all_suggestions.extend(keyword_suggestions)
                                 
-                                progress_bar.progress((i + 1) * 15 // len(keywords))
-                                status_text.text(f"⏳ Collecte en cours... {len(all_suggestions)} suggestions trouvées")
-                            
-                            if not all_suggestions:
-                                st.error("❌ Aucune suggestion trouvée")
+                                all_enriched_keywords = enriched_data.get('enriched_keywords', [])
+                                
+                                st.success(f"✅ {enriched_data.get('total_keywords', 0)} mots-clés enrichis, {enriched_data.get('keywords_with_volume', 0)} avec volume ≥ {min_search_volume}")
+                                progress_bar.progress(60)
                             else:
-                                # Affichage des statistiques de collecte
-                                level_counts = {}
-                                for suggestion in all_suggestions:
-                                    level = suggestion['Niveau']
-                                    level_counts[level] = level_counts.get(level, 0) + 1
+                                # Pas d'enrichissement DataForSEO, utiliser les suggestions Google uniquement
+                                all_enriched_keywords = [
+                                    {
+                                        'keyword': s['Suggestion Google'],
+                                        'search_volume': 0,
+                                        'cpc': 0,
+                                        'competition': 0,
+                                        'competition_level': 'UNKNOWN',
+                                        'type': 'original',
+                                        'source': 'google_suggest'
+                                    }
+                                    for s in all_suggestions
+                                ]
+                                progress_bar.progress(60)
+                            
+                            all_themes = {}
+                            
+                            if current_generate_questions:
+                                # Étape 3: Analyse des thèmes récurrents sur TOUS les mots-clés enrichis
+                                status_text.text(f"⏳ Étape 3/{total_steps}: Analyse des thèmes sur tous les mots-clés...")
+                                progress_bar.progress(70)
                                 
-                                st.info(f"✅ {len(all_suggestions)} suggestions collectées - Niveau 0: {level_counts.get(0, 0)}, Niveau 1: {level_counts.get(1, 0)}, Niveau 2: {level_counts.get(2, 0)}, Niveau 3: {level_counts.get(3, 0)}")
+                                # Grouper les mots-clés enrichis par mot-clé principal d'origine
+                                keywords_by_origin = {}
+                                for keyword in keywords:
+                                    # Trouver tous les mots-clés enrichis liés à ce mot-clé principal
+                                    related_keywords = []
+                                    
+                                    # Ajouter le mot-clé principal
+                                    for enriched in all_enriched_keywords:
+                                        if enriched['keyword'].lower() == keyword.lower():
+                                            related_keywords.append(enriched)
+                                            break
+                                    
+                                    # Ajouter les suggestions Google liées
+                                    for suggestion in all_suggestions:
+                                        if suggestion['Mot-clé'] == keyword and suggestion['Niveau'] > 0:
+                                            for enriched in all_enriched_keywords:
+                                                if enriched['keyword'].lower() == suggestion['Suggestion Google'].lower():
+                                                    related_keywords.append(enriched)
+                                                    break
+                                    
+                                    # Ajouter les suggestions Ads si disponibles
+                                    if enable_dataforseo and 'ads_suggestions' in enriched_data:
+                                        for ads_suggestion in enriched_data['ads_suggestions']:
+                                            # Associer les suggestions Ads aux mots-clés principaux
+                                            if any(kw.lower() in ads_suggestion.get('source_keyword', '').lower() or 
+                                                  ads_suggestion.get('source_keyword', '').lower() in kw.lower() 
+                                                  for kw in [keyword]):
+                                                related_keywords.append(ads_suggestion)
+                                    
+                                    keywords_by_origin[keyword] = related_keywords
                                 
-                                # Nouvelles étapes DataForSEO
-                                enriched_data = {}
-                                all_enriched_keywords = []
-                                
-                                if enable_dataforseo and dataforseo_login and dataforseo_password:
-                                    # Étape 2: Enrichissement DataForSEO
-                                    status_text.text("⏳ Étape 2/5: Enrichissement avec DataForSEO...")
-                                    progress_bar.progress(30)
-                                    
-                                    # Extraire tous les mots-clés et suggestions
-                                    initial_keywords = keywords
-                                    suggestion_texts = [s['Suggestion Google'] for s in all_suggestions if s['Niveau'] > 0]
-                                    
-                                    enriched_data = dataforseo_client.process_keywords_complete(
-                                        initial_keywords,
-                                        suggestion_texts,
-                                        dataforseo_language,
-                                        dataforseo_location,
-                                        min_search_volume
-                                    )
-                                    
-                                    all_enriched_keywords = enriched_data.get('enriched_keywords', [])
-                                    
-                                    st.success(f"✅ {enriched_data.get('total_keywords', 0)} mots-clés enrichis, {enriched_data.get('keywords_with_volume', 0)} avec volume ≥ {min_search_volume}")
-                                    progress_bar.progress(50)
-                                else:
-                                    # Pas d'enrichissement DataForSEO, utiliser les suggestions Google uniquement
-                                    all_enriched_keywords = [
-                                        {
-                                            'keyword': s['Suggestion Google'],
-                                            'search_volume': 0,
-                                            'cpc': 0,
-                                            'competition': 0,
-                                            'competition_level': 'UNKNOWN',
-                                            'type': 'original',
-                                            'source': 'google_suggest'
-                                        }
-                                        for s in all_suggestions
-                                    ]
-                                    progress_bar.progress(50)
-                                
-                                all_themes = {}
-                                
-                                if generate_questions:
-                                    # Étape 3: Analyse des thèmes récurrents sur TOUS les mots-clés enrichis
-                                    status_text.text("⏳ Étape 3/5: Analyse des thèmes sur tous les mots-clés...")
-                                    progress_bar.progress(60)
-                                    
-                                    # Grouper les mots-clés enrichis par mot-clé principal d'origine
-                                    keywords_by_origin = {}
-                                    for keyword in keywords:
-                                        # Trouver tous les mots-clés enrichis liés à ce mot-clé principal
-                                        related_keywords = []
+                                # Analyser les thèmes pour chaque groupe de mots-clés enrichis
+                                for i, (keyword, enriched_keywords_group) in enumerate(keywords_by_origin.items()):
+                                    if enriched_keywords_group:
+                                        # Créer des suggestions fictives pour l'analyse des thèmes
+                                        fake_suggestions = [
+                                            {
+                                                'Mot-clé': keyword,
+                                                'Niveau': 1,
+                                                'Suggestion Google': enriched_kw['keyword'],
+                                                'Parent': keyword,
+                                                'Search_Volume': enriched_kw.get('search_volume', 0),
+                                                'CPC': enriched_kw.get('cpc', 0),
+                                                'Competition': enriched_kw.get('competition_level', 'UNKNOWN')
+                                            }
+                                            for enriched_kw in enriched_keywords_group
+                                            if enriched_kw['keyword'] != keyword  # Exclure le mot-clé principal
+                                        ]
                                         
-                                        # Ajouter le mot-clé principal
-                                        for enriched in all_enriched_keywords:
-                                            if enriched['keyword'].lower() == keyword.lower():
-                                                related_keywords.append(enriched)
-                                                break
-                                        
-                                        # Ajouter les suggestions Google liées
-                                        for suggestion in all_suggestions:
-                                            if suggestion['Mot-clé'] == keyword and suggestion['Niveau'] > 0:
-                                                for enriched in all_enriched_keywords:
-                                                    if enriched['keyword'].lower() == suggestion['Suggestion Google'].lower():
-                                                        related_keywords.append(enriched)
-                                                        break
-                                        
-                                        # Ajouter les suggestions Ads si disponibles
-                                        if enable_dataforseo and 'ads_suggestions' in enriched_data:
-                                            for ads_suggestion in enriched_data['ads_suggestions']:
-                                                # Associer les suggestions Ads aux mots-clés principaux
-                                                if any(kw.lower() in ads_suggestion.get('source_keyword', '').lower() or 
-                                                      ads_suggestion.get('source_keyword', '').lower() in kw.lower() 
-                                                      for kw in [keyword]):
-                                                    related_keywords.append(ads_suggestion)
-                                        
-                                        keywords_by_origin[keyword] = related_keywords
+                                        if fake_suggestions:  # Vérifier qu'il y a des suggestions à analyser
+                                            themes = question_generator.analyze_suggestions_themes(fake_suggestions, keyword, lang)
+                                            all_themes[keyword] = themes
                                     
-                                    # Analyser les thèmes pour chaque groupe de mots-clés enrichis
-                                    for i, (keyword, enriched_keywords_group) in enumerate(keywords_by_origin.items()):
-                                        if enriched_keywords_group:
-                                            # Créer des suggestions fictives pour l'analyse des thèmes
-                                            fake_suggestions = [
-                                                {
-                                                    'Mot-clé': keyword,
-                                                    'Niveau': 1,
-                                                    'Suggestion Google': enriched_kw['keyword'],
-                                                    'Parent': keyword,
-                                                    'Search_Volume': enriched_kw.get('search_volume', 0),
-                                                    'CPC': enriched_kw.get('cpc', 0),
-                                                    'Competition': enriched_kw.get('competition_level', 'UNKNOWN')
-                                                }
-                                                for enriched_kw in enriched_keywords_group
-                                                if enriched_kw['keyword'] != keyword  # Exclure le mot-clé principal
-                                            ]
-                                            
-                                            if fake_suggestions:  # Vérifier qu'il y a des suggestions à analyser
-                                                themes = question_generator.analyze_suggestions_themes(fake_suggestions, keyword, lang)
-                                                all_themes[keyword] = themes
-                                        
-                                        progress_bar.progress(60 + (i + 1) * 20 // len(keywords_by_origin))
-                                        time.sleep(0.5)
-                                    
-                                    progress_bar.progress(85)
-                                    status_text.text("⏳ Étape 4/5: Finalisation de l'analyse...")
+                                    progress_bar.progress(70 + (i + 1) * 20 // len(keywords_by_origin))
+                                    time.sleep(0.5)
                                 
-                                progress_bar.progress(100)
-                                status_text.text("✅ Analyse des thèmes terminée !")
-                                
-                                # Sauvegarder les résultats intermédiaires
-                                st.session_state.analysis_results = {
-                                    'all_suggestions': all_suggestions,
-                                    'level_counts': level_counts,
-                                    'themes_analysis': all_themes if generate_questions else {},
-                                    'enriched_keywords': all_enriched_keywords,
-                                    'dataforseo_data': enriched_data,
-                                    'stage': 'themes_analyzed'
-                                }
-                                
-                                st.session_state.analysis_metadata = {
-                                    'keywords': keywords,
-                                    'level1_count': level1_count,
-                                    'level2_count': level2_count,
-                                    'level3_count': level3_count,
-                                    'enable_level2': enable_level2,
-                                    'enable_level3': enable_level3,
-                                    'generate_questions': generate_questions,
-                                    'final_questions_count': final_questions_count if generate_questions else 0,
-                                    'timestamp': time.strftime("%Y-%m-%d %H:%M:%S"),
-                                    'language': lang,
-                                    'enable_dataforseo': enable_dataforseo,
-                                    'dataforseo_language': dataforseo_language if enable_dataforseo else None,
-                                    'dataforseo_location': dataforseo_location if enable_dataforseo else None,
-                                    'min_search_volume': min_search_volume if enable_dataforseo else 0
-                                }
-                                
-                                # Nettoyer les éléments temporaires
-                                progress_bar.empty()
-                                status_text.empty()
-                                
-                                # Forcer le rechargement pour afficher l'interface de sélection
-                                st.rerun()
-                        
-                        except Exception as e:
-                            st.error(f"❌ Erreur lors de l'analyse: {str(e)}")
-                            # Debug info
-                            import traceback
-                            st.error(f"Détails de l'erreur: {traceback.format_exc()}")
+                                progress_bar.progress(95)
+                                status_text.text(f"⏳ Étape {total_steps}/{total_steps}: Finalisation de l'analyse...")
+                            
+                            progress_bar.progress(100)
+                            status_text.text("✅ Analyse terminée !")
+                            
+                            # Sauvegarder les résultats intermédiaires
+                            st.session_state.analysis_results = {
+                                'all_suggestions': all_suggestions,
+                                'level_counts': level_counts,
+                                'themes_analysis': all_themes if current_generate_questions else {},
+                                'enriched_keywords': all_enriched_keywords,
+                                'dataforseo_data': enriched_data,
+                                'stage': 'themes_analyzed'
+                            }
+                            
+                            st.session_state.analysis_metadata = {
+                                'keywords': keywords,
+                                'level1_count': level1_count,
+                                'level2_count': level2_count,
+                                'level3_count': level3_count,
+                                'enable_level2': enable_level2,
+                                'enable_level3': enable_level3,
+                                'generate_questions': current_generate_questions,
+                                'final_questions_count': final_questions_count if current_generate_questions else 0,
+                                'timestamp': time.strftime("%Y-%m-%d %H:%M:%S"),
+                                'language': lang,
+                                'enable_dataforseo': enable_dataforseo,
+                                'dataforseo_language': dataforseo_language if enable_dataforseo else None,
+                                'dataforseo_location': dataforseo_location if enable_dataforseo else None,
+                                'min_search_volume': min_search_volume if enable_dataforseo else 0
+                            }
+                            
+                            # Nettoyer les éléments temporaires
+                            progress_bar.empty()
+                            status_text.empty()
+                            
+                            # Message de succès
+                            if current_generate_questions:
+                                st.success("✅ Analyse terminée ! Sélectionnez vos thèmes ci-dessous.")
+                            else:
+                                st.success("✅ Suggestions collectées ! Consultez les résultats ci-dessous.")
+                            
+                            # Forcer le rechargement pour afficher l'interface de sélection
+                            st.rerun()
+                    
+                    except Exception as e:
+                        st.error(f"❌ Erreur lors de l'analyse: {str(e)}")
+                        # Debug info
+                        import traceback
+                        st.error(f"Détails de l'erreur: {traceback.format_exc()}")
 
     with col_clear:
         if st.button("🗑️ Effacer", help="Effacer les résultats actuels"):
