@@ -266,7 +266,12 @@ if 'analysis_results' in st.session_state and st.session_state.analysis_results 
     
     st.sidebar.header("📤 Export des résultats")
     
-    if metadata['generate_questions'] and len(results['final_consolidated_data']) > 0:
+    # Vérifier que les questions ont été générées avant d'afficher les exports
+    if (metadata['generate_questions'] and 
+        results.get('stage') == 'questions_generated' and 
+        results.get('final_consolidated_data') and 
+        len(results['final_consolidated_data']) > 0):
+        
         # Export Excel des questions avec thèmes
         excel_df = pd.DataFrame(results['final_consolidated_data'])
         excel_display = excel_df[['Question Conversationnelle', 'Mot-clé', 'Thème', 'Intention', 'Score_Importance']].copy()
@@ -282,8 +287,8 @@ if 'analysis_results' in st.session_state and st.session_state.analysis_results 
             use_container_width=True
         )
     
-    # Export Excel des suggestions
-    if len(results['all_suggestions']) > 0:
+    # Export Excel des suggestions (toujours disponible après analyse)
+    if results.get('all_suggestions') and len(results['all_suggestions']) > 0:
         suggestions_df = pd.DataFrame(results['all_suggestions'])
         suggestions_display = suggestions_df[['Mot-clé', 'Suggestion Google', 'Niveau', 'Parent']].copy()
         suggestions_excel = create_excel_file(suggestions_display)
@@ -296,26 +301,37 @@ if 'analysis_results' in st.session_state and st.session_state.analysis_results 
             use_container_width=True
         )
     
-    # Export JSON complet
-    export_json = {
-        "metadata": {
-            **metadata,
-            "total_suggestions": len(results['all_suggestions']),
-            "level_distribution": results['level_counts']
-        },
-        "suggestions": results['all_suggestions'],
-        "questions": results['final_consolidated_data'] if metadata['generate_questions'] else []
-    }
+    # Export JSON complet (adapté selon l'étape)
+    if results.get('all_suggestions'):
+        export_json = {
+            "metadata": {
+                **metadata,
+                "total_suggestions": len(results.get('all_suggestions', [])),
+                "level_distribution": results.get('level_counts', {}),
+                "stage": results.get('stage', 'unknown')
+            },
+            "suggestions": results.get('all_suggestions', []),
+            "themes_analysis": results.get('themes_analysis', {}),
+            "questions": results.get('final_consolidated_data', []) if metadata.get('generate_questions') and results.get('stage') == 'questions_generated' else []
+        }
+        
+        json_data = json.dumps(export_json, ensure_ascii=False, indent=2)
+        st.sidebar.download_button(
+            label="📋 Données (JSON)",
+            data=json_data,
+            file_name="analyse_complete_multiniveaux.json",
+            mime="application/json",
+            key="download_json",
+            use_container_width=True
+        )
     
-    json_data = json.dumps(export_json, ensure_ascii=False, indent=2)
-    st.sidebar.download_button(
-        label="📋 Données (JSON)",
-        data=json_data,
-        file_name="analyse_complete_multiniveaux.json",
-        mime="application/json",
-        key="download_json",
-        use_container_width=True
-    )
+    # Afficher l'état actuel dans la sidebar
+    if results.get('stage') == 'themes_analyzed' and metadata.get('generate_questions'):
+        st.sidebar.info("📋 Sélectionnez vos thèmes pour générer les questions")
+    elif results.get('stage') == 'questions_generated':
+        st.sidebar.success("✅ Questions générées - Exports disponibles")
+    elif results.get('all_suggestions'):
+        st.sidebar.success("✅ Suggestions collectées - Export disponible")
 
 def analyze_suggestion_relevance(keyword, suggestion, level):
     """Analyse la pertinence d'une suggestion par rapport au mot-clé principal"""
