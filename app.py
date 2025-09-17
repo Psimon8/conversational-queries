@@ -14,6 +14,9 @@ from io import BytesIO
 # Import du module de génération de questions
 from question_generator import QuestionGenerator
 
+# Import du module DataForSEO
+from dataforseo_client import DataForSEOClient
+
 # Configuration de la page Streamlit
 st.set_page_config(
     page_title="SEO Conversational Queries Optimizer",
@@ -35,15 +38,60 @@ st.subheader("Analyse basée sur les suggestions Google pour l'optimisation SEO"
 st.sidebar.header("⚙️ Configuration")
 api_key = st.sidebar.text_input("Clé API OpenAI", type="password", help="Votre clé API OpenAI pour GPT-4o mini")
 
-if api_key:
-    client = OpenAI(api_key=api_key)
-    st.sidebar.success("✅ API configurée")
-    # Initialiser le générateur de questions avec le client
-    question_generator = QuestionGenerator(client)
-else:
-    st.sidebar.warning("⚠️ Veuillez entrer votre clé API OpenAI")
-    client = None
-    question_generator = QuestionGenerator()
+# Configuration DataForSEO
+st.sidebar.header("📊 DataForSEO (optionnel)")
+enable_dataforseo = st.sidebar.checkbox(
+    "Enrichir avec DataForSEO",
+    value=False,
+    help="Ajouter les volumes de recherche et suggestions Ads"
+)
+
+dataforseo_client = DataForSEOClient()
+
+if enable_dataforseo:
+    dataforseo_login = st.sidebar.text_input("Login DataForSEO", type="default")
+    dataforseo_password = st.sidebar.text_input("Mot de passe DataForSEO", type="password")
+    
+    # Sélecteurs géographiques
+    col_lang, col_country = st.sidebar.columns(2)
+    with col_lang:
+        dataforseo_language = st.selectbox(
+            "Langue DataForSEO",
+            options=['fr', 'en', 'es', 'de', 'it'],
+            index=0,
+            help="Langue pour les données DataForSEO"
+        )
+    
+    with col_country:
+        dataforseo_location = st.selectbox(
+            "Pays cible",
+            options=['fr', 'en-us', 'en-gb', 'es', 'de', 'it', 'ca', 'au'],
+            index=0,
+            help="Pays pour la géolocalisation des volumes"
+        )
+    
+    min_search_volume = st.sidebar.slider(
+        "Volume de recherche minimum",
+        min_value=0,
+        max_value=1000,
+        value=10,
+        help="Volume mensuel minimum pour conserver un mot-clé"
+    )
+    
+    if dataforseo_login and dataforseo_password:
+        dataforseo_client.set_credentials(dataforseo_login, dataforseo_password)
+        
+        # Test des credentials
+        if st.sidebar.button("🔍 Tester les credentials"):
+            is_valid, message = dataforseo_client.test_credentials()
+            if is_valid:
+                st.sidebar.success(message)
+            else:
+                st.sidebar.error(message)
+        
+        st.sidebar.success("✅ DataForSEO configuré")
+    else:
+        st.sidebar.warning("⚠️ Credentials DataForSEO requis")
 
 # Options de génération dans la sidebar
 st.sidebar.header("🎯 Options d'analyse")
@@ -758,10 +806,10 @@ with tab1:
                             enable_level3 = level3_count > 0 and enable_level2
                             
                             # Étape 1: Collecte des suggestions multi-niveaux
-                            status_text.text("⏳ Étape 1/3: Collecte des suggestions Google multi-niveaux...")
-                            
+                            status_text.text("⏳ Étape 1/5: Collecte des suggestions Google multi-niveaux...")
+                                
                             all_suggestions = []
-                            
+                                
                             for i, keyword in enumerate(keywords):
                                 keyword_suggestions = get_google_suggestions_multilevel(
                                     keyword, 
@@ -774,9 +822,9 @@ with tab1:
                                 )
                                 all_suggestions.extend(keyword_suggestions)
                                 
-                                progress_bar.progress((i + 1) * 30 // len(keywords))
+                                progress_bar.progress((i + 1) * 15 // len(keywords))
                                 status_text.text(f"⏳ Collecte en cours... {len(all_suggestions)} suggestions trouvées")
-                            
+                                
                             if not all_suggestions:
                                 st.error("❌ Aucune suggestion trouvée")
                             else:
@@ -788,58 +836,148 @@ with tab1:
                                 
                                 st.info(f"✅ {len(all_suggestions)} suggestions collectées - Niveau 0: {level_counts.get(0, 0)}, Niveau 1: {level_counts.get(1, 0)}, Niveau 2: {level_counts.get(2, 0)}, Niveau 3: {level_counts.get(3, 0)}")
                                 
+                                # Nouvelles étapes DataForSEO
+                                enriched_data = {}
+                                all_enriched_keywords = []
+                                
+                                if enable_dataforseo and dataforseo_login and dataforseo_password:
+                                    # Étape 2: Enrichissement DataForSEO
+                                    status_text.text("⏳ Étape 2/5: Enrichissement avec DataForSEO...")
+                                    progress_bar.progress(30)
+                                    
+                                    # Extraire tous les mots-clés et suggestions
+                                    initial_keywords = keywords
+                                    suggestion_texts = [s['Suggestion Google'] for s in all_suggestions if s['Niveau'] > 0]
+                                    
+                                    enriched_data = dataforseo_client.process_keywords_complete(
+                                        initial_keywords,
+                                        suggestion_texts,
+                                        dataforseo_language,
+                                        dataforseo_location,
+                                        min_search_volume
+                                    )
+                                    
+                                    all_enriched_keywords = enriched_data.get('enriched_keywords', [])
+                                    
+                                    st.success(f"✅ {enriched_data.get('total_keywords', 0)} mots-clés enrichis, {enriched_data.get('keywords_with_volume', 0)} avec volume ≥ {min_search_volume}")
+                                    progress_bar.progress(50)
+                                else:
+                                    # Pas d'enrichissement DataForSEO, utiliser les suggestions Google uniquement
+                                    all_enriched_keywords = [
+                                        {
+                                            'keyword': s['Suggestion Google'],
+                                            'search_volume': 0,
+                                            'cpc': 0,
+                                            'competition': 0,
+                                            'competition_level': 'UNKNOWN',
+                                            'type': 'original',
+                                            'source': 'google_suggest'
+                                        }
+                                        for s in all_suggestions
+                                    ]
+                                    progress_bar.progress(50)
+                                    
                                 all_themes = {}
                                 
                                 if generate_questions:
-                                    # Étape 2: Analyse des thèmes récurrents
-                                    status_text.text("⏳ Étape 2/3: Analyse des thèmes récurrents dans les suggestions...")
+                                    # Étape 3: Analyse des thèmes récurrents sur TOUS les mots-clés enrichis
+                                    status_text.text("⏳ Étape 3/5: Analyse des thèmes sur tous les mots-clés...")
                                     progress_bar.progress(60)
                                     
-                                    # Analyser les thèmes pour chaque mot-clé avec le générateur ET la langue
-                                    for i, keyword in enumerate(keywords):
-                                        keyword_suggestions = [s for s in all_suggestions if s['Mot-clé'] == keyword]
-                                        themes = question_generator.analyze_suggestions_themes(keyword_suggestions, keyword, lang)
-                                        all_themes[keyword] = themes
+                                    # Grouper les mots-clés enrichis par mot-clé principal d'origine
+                                    keywords_by_origin = {}
+                                    for keyword in keywords:
+                                        # Trouver tous les mots-clés enrichis liés à ce mot-clé principal
+                                        related_keywords = []
                                         
-                                        progress_bar.progress(60 + (i + 1) * 30 // len(keywords))
-                                        time.sleep(1)  # Délai pour éviter le rate limiting
+                                        # Ajouter le mot-clé principal
+                                        for enriched in all_enriched_keywords:
+                                            if enriched['keyword'].lower() == keyword.lower():
+                                                related_keywords.append(enriched)
+                                                break
+                                        
+                                        # Ajouter les suggestions Google liées
+                                        for suggestion in all_suggestions:
+                                            if suggestion['Mot-clé'] == keyword and suggestion['Niveau'] > 0:
+                                                for enriched in all_enriched_keywords:
+                                                    if enriched['keyword'].lower() == suggestion['Suggestion Google'].lower():
+                                                        related_keywords.append(enriched)
+                                                        break
+                                        
+                                        # Ajouter les suggestions Ads si disponibles
+                                        if enable_dataforseo and 'ads_suggestions' in enriched_data:
+                                            for ads_suggestion in enriched_data['ads_suggestions']:
+                                                # Associer les suggestions Ads aux mots-clés principaux
+                                                if any(kw.lower() in ads_suggestion.get('source_keyword', '').lower() or 
+                                                      ads_suggestion.get('source_keyword', '').lower() in kw.lower() 
+                                                      for kw in [keyword]):
+                                                    related_keywords.append(ads_suggestion)
+                                        
+                                        keywords_by_origin[keyword] = related_keywords
                                     
-                                    progress_bar.progress(90)
-                                    status_text.text("⏳ Étape 3/3: Finalisation de l'analyse...")
-                                
-                                progress_bar.progress(100)
-                                status_text.text("✅ Analyse des thèmes terminée !")
-                                
-                                # Sauvegarder les résultats intermédiaires
-                                st.session_state.analysis_results = {
-                                    'all_suggestions': all_suggestions,
-                                    'level_counts': level_counts,
-                                    'themes_analysis': all_themes if generate_questions else {},
-                                    'stage': 'themes_analyzed'  # Nouveau flag pour indiquer l'étape
-                                }
-                                
-                                st.session_state.analysis_metadata = {
-                                    'keywords': keywords,
-                                    'level1_count': level1_count,
-                                    'level2_count': level2_count,
-                                    'level3_count': level3_count,
-                                    'enable_level2': enable_level2,
-                                    'enable_level3': enable_level3,
-                                    'generate_questions': generate_questions,
-                                    'final_questions_count': final_questions_count if generate_questions else 0,
-                                    'timestamp': time.strftime("%Y-%m-%d %H:%M:%S"),
-                                    'language': lang
-                                }
-                                
-                                # Nettoyer les éléments temporaires
-                                progress_bar.empty()
-                                status_text.empty()
-                                
-                                # Forcer le rechargement pour afficher l'interface de sélection
-                                st.rerun()
-                        
-                        except Exception as e:
-                            st.error(f"❌ Erreur lors de l'analyse: {str(e)}")
+                                    # Analyser les thèmes pour chaque groupe de mots-clés enrichis
+                                    for i, (keyword, enriched_keywords_group) in enumerate(keywords_by_origin.items()):
+                                        if enriched_keywords_group:
+                                            # Créer des suggestions fictives pour l'analyse des thèmes
+                                            fake_suggestions = [
+                                                {
+                                                    'Mot-clé': keyword,
+                                                    'Niveau': 1,
+                                                    'Suggestion Google': enriched_kw['keyword'],
+                                                    'Parent': keyword,
+                                                    'Search_Volume': enriched_kw.get('search_volume', 0),
+                                                    'CPC': enriched_kw.get('cpc', 0),
+                                                    'Competition': enriched_kw.get('competition_level', 'UNKNOWN')
+                                                }
+                                                for enriched_kw in enriched_keywords_group
+                                                if enriched_kw['keyword'] != keyword  # Exclure le mot-clé principal
+                                            ]
+                                            
+                                            themes = question_generator.analyze_suggestions_themes(fake_suggestions, keyword, lang)
+                                            all_themes[keyword] = themes
+                                        
+                                        progress_bar.progress(60 + (i + 1) * 20 // len(keywords_by_origin))
+                                        time.sleep(0.5)
+                                    
+                                    progress_bar.progress(85)
+                                    status_text.text("⏳ Étape 4/5: Finalisation de l'analyse...")
+                                    
+                                    progress_bar.progress(100)
+                                    status_text.text("✅ Analyse des thèmes terminée !")
+                                    
+                                    # Sauvegarder les résultats intermédiaires
+                                    st.session_state.analysis_results = {
+                                        'all_suggestions': all_suggestions,
+                                        'level_counts': level_counts,
+                                        'themes_analysis': all_themes if generate_questions else {},
+                                        'enriched_keywords': all_enriched_keywords,
+                                        'dataforseo_data': enriched_data,
+                                        'stage': 'themes_analyzed'
+                                    }
+                                    
+                                    st.session_state.analysis_metadata = {
+                                        'keywords': keywords,
+                                        'level1_count': level1_count,
+                                        'level2_count': level2_count,
+                                        'level3_count': level3_count,
+                                        'enable_level2': enable_level2,
+                                        'enable_level3': enable_level3,
+                                        'generate_questions': generate_questions,
+                                        'final_questions_count': final_questions_count if generate_questions else 0,
+                                        'timestamp': time.strftime("%Y-%m-%d %H:%M:%S"),
+                                        'language': lang,
+                                        'enable_dataforseo': enable_dataforseo,
+                                        'dataforseo_language': dataforseo_language if enable_dataforseo else None,
+                                        'dataforseo_location': dataforseo_location if enable_dataforseo else None,
+                                        'min_search_volume': min_search_volume if enable_dataforseo else 0
+                                    }
+                                    
+                                    # Nettoyer les éléments temporaires
+                                    progress_bar.empty()
+                                    status_text.empty()
+                                    
+                                    # Forcer le rechargement pour afficher l'interface de sélection
+                                    st.rerun()
 
     with col_clear:
         if st.button("🗑️ Effacer", help="Effacer les résultats actuels"):
@@ -848,7 +986,7 @@ with tab1:
             st.session_state.themes_selection = None
             st.rerun()
     
-    # Interface de sélection des thèmes (nouvelle section)
+    # Interface de sélection des thèmes (avec données enrichies)
     if (st.session_state.get('analysis_results') is not None and 
         st.session_state.analysis_results.get('stage') == 'themes_analyzed' and
         st.session_state.analysis_metadata['generate_questions']):
@@ -856,161 +994,173 @@ with tab1:
         st.markdown("---")
         st.markdown("## 🎨 Sélection des thèmes pour la génération de questions")
         
-        themes_analysis = st.session_state.analysis_results.get('themes_analysis', {})
+        # Afficher les statistiques d'enrichissement DataForSEO si disponible
+        if st.session_state.analysis_metadata.get('enable_dataforseo'):
+            dataforseo_data = st.session_state.analysis_results.get('dataforseo_data', {})
+            if dataforseo_data:
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Mots-clés totaux", dataforseo_data.get('total_keywords', 0))
+                with col2:
+                    st.metric("Avec volume > 0", dataforseo_data.get('keywords_with_volume', 0))
+                with col3:
+                    st.metric("Suggestions Ads", len(dataforseo_data.get('ads_suggestions', [])))
+                with col4:
+                    avg_volume = sum(k.get('search_volume', 0) for k in st.session_state.analysis_results.get('enriched_keywords', [])) / max(len(st.session_state.analysis_results.get('enriched_keywords', [])), 1)
+                    st.metric("Volume moyen", f"{avg_volume:.0f}")
         
-        if themes_analysis:
-            # Créer une interface de sélection pour chaque mot-clé
-            selected_themes_by_keyword = {}
-            
-            for keyword, themes in themes_analysis.items():
-                if themes:
-                    st.markdown(f"### 🎯 Thèmes identifiés pour '{keyword}'")
-                    
-                    # Créer des colonnes pour l'affichage des thèmes
-                    themes_per_row = 2
-                    for i in range(0, len(themes), themes_per_row):
-                        cols = st.columns(themes_per_row)
-                        
-                        for j, theme in enumerate(themes[i:i+themes_per_row]):
-                            with cols[j]:
-                                theme_name = theme.get('nom', f'Thème {i+j+1}')
-                                theme_importance = theme.get('importance', 3)
-                                theme_intention = theme.get('intention', 'informational')
-                                concepts = theme.get('concepts', [])
-                                exemples = theme.get('exemples_suggestions', [])
-                                
-                                # Checkbox pour sélectionner le thème (sélectionné par défaut)
-                                theme_key = f"{keyword}_{theme_name}_{i+j}"
-                                is_selected = st.checkbox(
-                                    f"**{theme_name}**",
-                                    value=True,  # Sélectionné par défaut
-                                    key=theme_key,
-                                    help=f"Importance: {theme_importance}/5 | Intention: {theme_intention}"
-                                )
-                                
-                                if is_selected:
-                                    if keyword not in selected_themes_by_keyword:
-                                        selected_themes_by_keyword[keyword] = []
-                                    selected_themes_by_keyword[keyword].append(theme)
-                                
-                                # Afficher les détails du thème
-                                with st.expander(f"Détails du thème '{theme_name}'"):
-                                    st.write(f"**Importance:** {theme_importance}/5")
-                                    st.write(f"**Intention:** {theme_intention}")
-                                    if concepts:
-                                        st.write(f"**Concepts:** {', '.join(concepts[:5])}")
-                                    if exemples:
-                                        st.write(f"**Exemples de suggestions:** {', '.join(exemples[:3])}")
-            
-            # Bouton pour générer les questions avec les thèmes sélectionnés
-            st.markdown("---")
-            col_generate, col_info = st.columns([3, 2])
-            
-            with col_generate:
-                total_selected_themes = sum(len(themes) for themes in selected_themes_by_keyword.values())
+        # Créer une interface de sélection pour chaque mot-clé
+        selected_themes_by_keyword = {}
+        
+        for keyword, themes in st.session_state.analysis_results.get('themes_analysis', {}).items():
+            if themes:
+                st.markdown(f"### 🎯 Thèmes identifiés pour '{keyword}'")
                 
-                if total_selected_themes > 0:
-                    if st.button("✨ Générer les questions avec les thèmes sélectionnés", type="primary"):
-                        # Lancer la génération avec les thèmes sélectionnés
-                        try:
-                            progress_bar = st.progress(0)
-                            status_text = st.empty()
+                # Créer des colonnes pour l'affichage des thèmes
+                themes_per_row = 2
+                for i in range(0, len(themes), themes_per_row):
+                    cols = st.columns(themes_per_row)
+                    
+                    for j, theme in enumerate(themes[i:i+themes_per_row]):
+                        with cols[j]:
+                            theme_name = theme.get('nom', f'Thème {i+j+1}')
+                            theme_importance = theme.get('importance', 3)
+                            theme_intention = theme.get('intention', 'informational')
+                            concepts = theme.get('concepts', [])
+                            exemples = theme.get('exemples_suggestions', [])
                             
-                            status_text.text("⏳ Génération des questions conversationnelles...")
+                            # Checkbox pour sélectionner le thème (sélectionné par défaut)
+                            theme_key = f"{keyword}_{theme_name}_{i+j}"
+                            is_selected = st.checkbox(
+                                f"**{theme_name}**",
+                                value=True,  # Sélectionné par défaut
+                                key=theme_key,
+                                help=f"Importance: {theme_importance}/5 | Intention: {theme_intention}"
+                            )
                             
-                            metadata = st.session_state.analysis_metadata
-                            final_questions_count = metadata['final_questions_count']
-                            lang = metadata['language']
+                            if is_selected:
+                                if keyword not in selected_themes_by_keyword:
+                                    selected_themes_by_keyword[keyword] = []
+                                selected_themes_by_keyword[keyword].append(theme)
                             
-                            all_questions_data = []
-                            questions_per_keyword = final_questions_count // len(selected_themes_by_keyword)
-                            remaining_questions = final_questions_count
+                            # Afficher les détails du thème
+                            with st.expander(f"Détails du thème '{theme_name}'"):
+                                st.write(f"**Importance:** {theme_importance}/5")
+                                st.write(f"**Intention:** {theme_intention}")
+                                if concepts:
+                                    st.write(f"**Concepts:** {', '.join(concepts[:5])}")
+                                if exemples:
+                                    st.write(f"**Exemples de suggestions:** {', '.join(exemples[:3])}")
+        
+        # Bouton pour générer les questions avec les thèmes sélectionnés
+        st.markdown("---")
+        col_generate, col_info = st.columns([3, 2])
+        
+        with col_generate:
+            total_selected_themes = sum(len(themes) for themes in selected_themes_by_keyword.values())
+            
+            if total_selected_themes > 0:
+                if st.button("✨ Générer les questions avec les thèmes sélectionnés", type="primary"):
+                    # Lancer la génération avec les thèmes sélectionnés
+                    try:
+                        progress_bar = st.progress(0)
+                        status_text = st.empty()
+                        
+                        status_text.text("⏳ Génération des questions conversationnelles...")
+                        
+                        metadata = st.session_state.analysis_metadata
+                        final_questions_count = metadata['final_questions_count']
+                        lang = metadata['language']
+                        
+                        all_questions_data = []
+                        questions_per_keyword = final_questions_count // len(selected_themes_by_keyword)
+                        remaining_questions = final_questions_count
+                        
+                        keyword_list = list(selected_themes_by_keyword.keys())
+                        
+                        for i, (keyword, selected_themes) in enumerate(selected_themes_by_keyword.items()):
+                            if remaining_questions <= 0:
+                                break
                             
-                            keyword_list = list(selected_themes_by_keyword.keys())
+                            # Calculer le nombre de questions pour ce mot-clé
+                            if i == len(keyword_list) - 1:  # Dernier mot-clé
+                                keyword_questions = remaining_questions
+                            else:
+                                keyword_questions = min(questions_per_keyword, remaining_questions)
                             
-                            for i, (keyword, selected_themes) in enumerate(selected_themes_by_keyword.items()):
-                                if remaining_questions <= 0:
-                                    break
-                                
-                                # Calculer le nombre de questions pour ce mot-clé
-                                if i == len(keyword_list) - 1:  # Dernier mot-clé
-                                    keyword_questions = remaining_questions
-                                else:
-                                    keyword_questions = min(questions_per_keyword, remaining_questions)
-                                
-                                if keyword_questions > 0 and selected_themes:
-                                    keyword_questions_list = question_generator.generate_questions_from_themes(
-                                        keyword, 
-                                        selected_themes, 
-                                        keyword_questions,
-                                        lang
-                                    )
-                                    
-                                    for q in keyword_questions_list:
-                                        q['Mot-clé'] = keyword
-                                        # Ajouter une suggestion Google représentative du thème
-                                        theme_name = q.get('Thème', '')
-                                        # Trouver une suggestion représentative du thème dans les suggestions collectées
-                                        representative_suggestion = keyword  # Fallback
-                                        if theme_name and selected_themes:
-                                            for theme in selected_themes:
-                                                if theme.get('nom') == theme_name:
-                                                    exemples_suggestions = theme.get('exemples_suggestions', [])
-                                                    if exemples_suggestions:
-                                                        representative_suggestion = exemples_suggestions[0]
-                                                    break
-                                        q['Suggestion Google'] = representative_suggestion
-                                        all_questions_data.append(q)
-                                    
-                                    remaining_questions -= len(keyword_questions_list)
-                                
-                                progress_bar.progress((i + 1) / len(keyword_list))
-                                time.sleep(0.5)
-                            
-                            if all_questions_data:
-                                # Trier par score d'importance et limiter au nombre demandé
-                                sorted_questions = sorted(
-                                    all_questions_data,
-                                    key=lambda x: x.get('Score_Importance', 0),
-                                    reverse=True
+                            if keyword_questions > 0 and selected_themes:
+                                keyword_questions_list = question_generator.generate_questions_from_themes(
+                                    keyword, 
+                                    selected_themes, 
+                                    keyword_questions,
+                                    lang
                                 )
                                 
-                                final_consolidated_data = sorted_questions[:final_questions_count]
+                                for q in keyword_questions_list:
+                                    q['Mot-clé'] = keyword
+                                    # Ajouter une suggestion Google représentative du thème
+                                    theme_name = q.get('Thème', '')
+                                    # Trouver une suggestion représentative du thème dans les suggestions collectées
+                                    representative_suggestion = keyword  # Fallback
+                                    if theme_name and selected_themes:
+                                        for theme in selected_themes:
+                                            if theme.get('nom') == theme_name:
+                                                exemples_suggestions = theme.get('exemples_suggestions', [])
+                                                if exemples_suggestions:
+                                                    representative_suggestion = exemples_suggestions[0]
+                                                break
+                                    q['Suggestion Google'] = representative_suggestion
+                                    all_questions_data.append(q)
                                 
-                                # Mettre à jour les résultats
-                                st.session_state.analysis_results.update({
-                                    'all_questions_data': all_questions_data,
-                                    'final_consolidated_data': final_consolidated_data,
-                                    'selected_themes_by_keyword': selected_themes_by_keyword,
-                                    'stage': 'questions_generated'
-                                })
-                                
-                                progress_bar.progress(1.0)
-                                status_text.text(f"✅ {len(final_consolidated_data)} questions générées avec succès !")
-                                
-                                time.sleep(1)
-                                progress_bar.empty()
-                                status_text.empty()
-                                
-                                st.success(f"🎉 {len(final_consolidated_data)} questions conversationnelles générées à partir de {total_selected_themes} thèmes sélectionnés !")
-                                
-                                # Forcer le rechargement pour afficher les résultats
-                                st.rerun()
-                            else:
-                                st.error("❌ Aucune question générée")
-                                
-                        except Exception as e:
-                            st.error(f"❌ Erreur lors de la génération: {str(e)}")
-                else:
-                    st.warning("⚠️ Veuillez sélectionner au moins un thème pour générer les questions.")
-            
-            with col_info:
-                st.info(f"📊 **{total_selected_themes}** thèmes sélectionnés sur {sum(len(themes) for themes in themes_analysis.values())}")
-                if total_selected_themes > 0:
-                    estimated_questions = min(final_questions_count, total_selected_themes * 3)
-                    st.info(f"🎯 Environ **{estimated_questions}** questions seront générées")
-        else:
-            st.warning("⚠️ Aucun thème identifié. Relancez l'analyse avec d'autres mots-clés.")
+                                remaining_questions -= len(keyword_questions_list)
+                            
+                            progress_bar.progress((i + 1) / len(keyword_list))
+                            time.sleep(0.5)
+                        
+                        if all_questions_data:
+                            # Trier par score d'importance et limiter au nombre demandé
+                            sorted_questions = sorted(
+                                all_questions_data,
+                                key=lambda x: x.get('Score_Importance', 0),
+                                reverse=True
+                            )
+                            
+                            final_consolidated_data = sorted_questions[:final_questions_count]
+                            
+                            # Mettre à jour les résultats
+                            st.session_state.analysis_results.update({
+                                'all_questions_data': all_questions_data,
+                                'final_consolidated_data': final_consolidated_data,
+                                'selected_themes_by_keyword': selected_themes_by_keyword,
+                                'stage': 'questions_generated'
+                            })
+                            
+                            progress_bar.progress(1.0)
+                            status_text.text(f"✅ {len(final_consolidated_data)} questions générées avec succès !")
+                            
+                            time.sleep(1)
+                            progress_bar.empty()
+                            status_text.empty()
+                            
+                            st.success(f"🎉 {len(final_consolidated_data)} questions conversationnelles générées à partir de {total_selected_themes} thèmes sélectionnés !")
+                            
+                            # Forcer le rechargement pour afficher les résultats
+                            st.rerun()
+                        else:
+                            st.error("❌ Aucune question générée")
+                            
+                    except Exception as e:
+                        st.error(f"❌ Erreur lors de la génération: {str(e)}")
+            else:
+                st.warning("⚠️ Veuillez sélectionner au moins un thème pour générer les questions.")
+        
+        with col_info:
+            st.info(f"📊 **{total_selected_themes}** thèmes sélectionnés sur {sum(len(themes) for themes in themes_analysis.values())}")
+            if total_selected_themes > 0:
+                estimated_questions = min(final_questions_count, total_selected_themes * 3)
+                st.info(f"🎯 Environ **{estimated_questions}** questions seront générées")
+    else:
+        st.warning("⚠️ Aucun thème identifié. Relancez l'analyse avec d'autres mots-clés.")
     
     # Affichage des résultats finaux (existant, mais modifié)
     if (st.session_state.get('analysis_results') is not None and 
