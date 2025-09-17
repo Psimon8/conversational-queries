@@ -116,11 +116,24 @@ class DataForSEOClient:
                     for task in data.get('tasks', []):
                         if task['status_code'] == 20000:
                             for item in task.get('result', []):
+                                # Gérer les valeurs None pour éviter les erreurs de comparaison
+                                search_volume = item.get('search_volume')
+                                if search_volume is None:
+                                    search_volume = 0
+                                
+                                cpc = item.get('cpc')
+                                if cpc is None:
+                                    cpc = 0.0
+                                
+                                competition = item.get('competition')
+                                if competition is None:
+                                    competition = 0.0
+                                
                                 results.append({
                                     'keyword': item.get('keyword', ''),
-                                    'search_volume': item.get('search_volume', 0),
-                                    'cpc': item.get('cpc', 0),
-                                    'competition': item.get('competition', 0),
+                                    'search_volume': search_volume,
+                                    'cpc': cpc,
+                                    'competition': competition,
                                     'competition_level': item.get('competition_level', 'UNKNOWN')
                                 })
                     return results
@@ -185,11 +198,24 @@ class DataForSEOClient:
                         for task in data.get('tasks', []):
                             if task['status_code'] == 20000:
                                 for item in task.get('result', []):
+                                    # Gérer les valeurs None pour éviter les erreurs de comparaison
+                                    search_volume = item.get('search_volume')
+                                    if search_volume is None:
+                                        search_volume = 0
+                                    
+                                    cpc = item.get('cpc')
+                                    if cpc is None:
+                                        cpc = 0.0
+                                    
+                                    competition = item.get('competition')
+                                    if competition is None:
+                                        competition = 0.0
+                                    
                                     all_suggestions.append({
                                         'keyword': item.get('keyword', ''),
-                                        'search_volume': item.get('search_volume', 0),
-                                        'cpc': item.get('cpc', 0),
-                                        'competition': item.get('competition', 0),
+                                        'search_volume': search_volume,
+                                        'cpc': cpc,
+                                        'competition': competition,
                                         'competition_level': item.get('competition_level', 'UNKNOWN'),
                                         'source_keyword': batch[0] if batch else '',  # Référence au mot-clé source
                                         'type': 'ads_suggestion'
@@ -235,11 +261,16 @@ class DataForSEOClient:
             status_text.empty()
             return {'volume_data': [], 'ads_suggestions': [], 'enriched_keywords': []}
         
-        # Filtrer par volume minimum
-        keywords_with_volume = [
-            item for item in volume_data 
-            if item['search_volume'] >= min_volume
-        ]
+        # Filtrer par volume minimum - avec protection contre None
+        keywords_with_volume = []
+        for item in volume_data:
+            search_volume = item.get('search_volume', 0)
+            # S'assurer que search_volume n'est pas None
+            if search_volume is None:
+                search_volume = 0
+            
+            if search_volume >= min_volume:
+                keywords_with_volume.append(item)
         
         st.success(f"✅ {len(volume_data)} volumes récupérés, {len(keywords_with_volume)} avec volume ≥ {min_volume}")
         
@@ -270,10 +301,18 @@ class DataForSEOClient:
             volume_info = keyword_volumes.get(keyword, {
                 'keyword': keyword,
                 'search_volume': 0,
-                'cpc': 0,
-                'competition': 0,
+                'cpc': 0.0,
+                'competition': 0.0,
                 'competition_level': 'UNKNOWN'
             })
+            
+            # S'assurer que tous les champs numériques ne sont pas None
+            if volume_info.get('search_volume') is None:
+                volume_info['search_volume'] = 0
+            if volume_info.get('cpc') is None:
+                volume_info['cpc'] = 0.0
+            if volume_info.get('competition') is None:
+                volume_info['competition'] = 0.0
             
             enriched_keywords.append({
                 **volume_info,
@@ -284,6 +323,14 @@ class DataForSEOClient:
         # Ajouter les suggestions Ads avec leurs volumes
         for ads_item in ads_suggestions:
             if ads_item['keyword'] not in [k['keyword'] for k in enriched_keywords]:
+                # S'assurer que tous les champs numériques ne sont pas None
+                if ads_item.get('search_volume') is None:
+                    ads_item['search_volume'] = 0
+                if ads_item.get('cpc') is None:
+                    ads_item['cpc'] = 0.0
+                if ads_item.get('competition') is None:
+                    ads_item['competition'] = 0.0
+                
                 enriched_keywords.append({
                     **ads_item,
                     'source': 'google_ads'
