@@ -244,8 +244,11 @@ def create_excel_file(df):
         
         # Ajuster la largeur des colonnes
         worksheet.column_dimensions['A'].width = 60  # Questions
-        worksheet.column_dimensions['B'].width = 40  # Suggestions
+        worksheet.column_dimensions['B'].width = 50  # Suggestions Google
         worksheet.column_dimensions['C'].width = 25  # Mots-clés
+        worksheet.column_dimensions['D'].width = 25  # Thème
+        worksheet.column_dimensions['E'].width = 20  # Intention
+        worksheet.column_dimensions['F'].width = 15  # Importance
         
         # Formatage de l'en-tête
         from openpyxl.styles import Font, PatternFill
@@ -272,10 +275,10 @@ if 'analysis_results' in st.session_state and st.session_state.analysis_results 
         results.get('final_consolidated_data') and 
         len(results['final_consolidated_data']) > 0):
         
-        # Export Excel des questions avec thèmes
+        # Export Excel des questions avec thèmes et suggestions
         excel_df = pd.DataFrame(results['final_consolidated_data'])
-        excel_display = excel_df[['Question Conversationnelle', 'Mot-clé', 'Thème', 'Intention', 'Score_Importance']].copy()
-        excel_display.columns = ['Questions Conversationnelles', 'Mot-clé', 'Thème', 'Intention', 'Importance']
+        excel_display = excel_df[['Question Conversationnelle', 'Suggestion Google', 'Mot-clé', 'Thème', 'Intention', 'Score_Importance']].copy()
+        excel_display.columns = ['Questions Conversationnelles', 'Suggestion Google', 'Mot-clé', 'Thème', 'Intention', 'Importance']
         
         excel_file = create_excel_file(excel_display)
         st.sidebar.download_button(
@@ -945,6 +948,18 @@ with tab1:
                                     
                                     for q in keyword_questions_list:
                                         q['Mot-clé'] = keyword
+                                        # Ajouter une suggestion Google représentative du thème
+                                        theme_name = q.get('Thème', '')
+                                        # Trouver une suggestion représentative du thème dans les suggestions collectées
+                                        representative_suggestion = keyword  # Fallback
+                                        if theme_name and selected_themes:
+                                            for theme in selected_themes:
+                                                if theme.get('nom') == theme_name:
+                                                    exemples_suggestions = theme.get('exemples_suggestions', [])
+                                                    if exemples_suggestions:
+                                                        representative_suggestion = exemples_suggestions[0]
+                                                    break
+                                        q['Suggestion Google'] = representative_suggestion
                                         all_questions_data.append(q)
                                     
                                     remaining_questions -= len(keyword_questions_list)
@@ -1046,8 +1061,8 @@ with tab1:
         if len(results['final_consolidated_data']) > 0:
             st.markdown("### 📋 Questions conversationnelles basées sur les thèmes sélectionnés")
             df_results = pd.DataFrame(results['final_consolidated_data'])
-            df_display = df_results[['Question Conversationnelle', 'Thème', 'Intention', 'Score_Importance', 'Mot-clé']].copy()
-            df_display.columns = ['Questions Conversationnelles', 'Thème', 'Intention', 'Importance', 'Mot-clé']
+            df_display = df_results[['Question Conversationnelle', 'Suggestion Google', 'Thème', 'Intention', 'Score_Importance', 'Mot-clé']].copy()
+            df_display.columns = ['Questions Conversationnelles', 'Suggestion Google', 'Thème', 'Intention', 'Importance', 'Mot-clé']
             st.dataframe(df_display, use_container_width=True)
             
             # Analyse des thèmes sélectionnés

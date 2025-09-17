@@ -561,8 +561,15 @@ class QuestionGenerator:
                 if response:
                     theme_questions_list = self.extract_questions_from_response(response)
                     for question in theme_questions_list[:theme_questions]:
+                        # Déterminer la suggestion Google représentative pour cette question
+                        representative_suggestion = keyword  # Fallback par défaut
+                        exemples_suggestions = theme.get('exemples_suggestions', [])
+                        if exemples_suggestions:
+                            representative_suggestion = exemples_suggestions[0]  # Première suggestion du thème
+                        
                         all_questions.append({
                             'Question Conversationnelle': question,
+                            'Suggestion Google': representative_suggestion,
                             'Thème': theme_name,
                             'Intention': intention,
                             'Concepts': concepts,
