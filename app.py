@@ -901,5 +901,41 @@ def clear_results():
     st.session_state.analysis_metadata = None
     st.rerun()
 
+def render_suggestions_only():
+    """Afficher uniquement les suggestions générées"""
+    if 'suggestions_data' in st.session_state and st.session_state.suggestions_data:
+        suggestions = st.session_state.suggestions_data
+        
+        st.subheader("📝 Suggestions générées")
+        
+        # Afficher les statistiques
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total suggestions", len(suggestions))
+        with col2:
+            unique_suggestions = len(set(suggestions))
+            st.metric("Suggestions uniques", unique_suggestions)
+        with col3:
+            if len(suggestions) > 0:
+                duplication_rate = (1 - unique_suggestions / len(suggestions)) * 100
+                st.metric("Taux de duplication", f"{duplication_rate:.1f}%")
+        
+        # Afficher la liste des suggestions
+        st.write("**Liste des suggestions:**")
+        suggestions_df = pd.DataFrame(suggestions, columns=['Suggestion'])
+        suggestions_df.index = suggestions_df.index + 1  # Commencer l'index à 1
+        st.dataframe(suggestions_df, use_container_width=True)
+        
+        # Option de téléchargement
+        csv_data = "\n".join(suggestions)
+        st.download_button(
+            label="📥 Télécharger les suggestions (TXT)",
+            data=csv_data,
+            file_name=f"suggestions_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.txt",
+            mime="text/plain"
+        )
+    else:
+        st.info("Aucune suggestion disponible. Lancez d'abord une génération de questions.")
+
 if __name__ == "__main__":
     main()
