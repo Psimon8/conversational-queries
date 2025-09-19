@@ -2,16 +2,17 @@ import streamlit as st
 from openai import OpenAI
 import pandas as pd
 import time
-import unicodedata
-import re
 
 # Imports des modules refactorisés
-from utils.ui_components import setup_page_config, render_header, render_social_links, render_metrics
+from utils.ui_components import setup_page_config, render_header, render_social_links
 from utils.config_manager import ConfigManager
 from utils.export_manager import ExportManager
+from utils.workflow_manager import WorkflowManager
+from utils.results_manager import ResultsManager
+from services.dataforseo_service import DataForSEOService
 from question_generator import QuestionGenerator
-from dataforseo_client import DataForSEOClient
 from google_suggestions import GoogleSuggestionsClient
+from dataforseo_client import normalize_keyword, deduplicate_keywords_with_origins
 
 def main():
     """Fonction principale de l'application"""
@@ -37,6 +38,7 @@ def main():
     client = OpenAI(api_key=api_key) if api_key else None
     question_generator = QuestionGenerator(client)
     google_client = GoogleSuggestionsClient()
+    dataforseo_service = DataForSEOService(dataforseo_config) if enable_dataforseo else None
     
     # Gestionnaire d'export
     if st.session_state.analysis_results:
@@ -52,10 +54,9 @@ def main():
     render_main_interface(
         config_manager, 
         google_client, 
-        question_generator, 
+        question_generator,
+        dataforseo_service,
         api_key, 
-        enable_dataforseo, 
-        dataforseo_config, 
         analysis_options
     )
 
@@ -67,7 +68,7 @@ def initialize_session_state():
         st.session_state.analysis_metadata = None
 
 def render_main_interface(config_manager, google_client, question_generator, 
-                         api_key, enable_dataforseo, dataforseo_config, analysis_options):
+                         dataforseo_service, api_key, analysis_options):
     """Interface principale d'analyse"""
     
     # Création des onglets
@@ -76,94 +77,14 @@ def render_main_interface(config_manager, google_client, question_generator,
     with tab1:
         render_analysis_tab(
             config_manager, google_client, question_generator,
-            api_key, enable_dataforseo, dataforseo_config, analysis_options
+            dataforseo_service, api_key, analysis_options
         )
     
     with tab2:
         render_instructions_tab()
 
-def normalize_keyword(keyword):
-    """Normalise un mot-clé: supprime accents, caractères spéciaux, met en minuscule"""
-    if not keyword:
-        return ""
-    
-    # Convertir en minuscule
-    keyword = keyword.lower()
-    
-    # Supprimer les accents
-    keyword = unicodedata.normalize('NFD', keyword)
-    keyword = ''.join(char for char in keyword if unicodedata.category(char) != 'Mn')
-    
-    # Supprimer les caractères spéciaux sauf espaces et traits d'union
-    keyword = re.sub(r'[^\w\s-]', '', keyword)
-    
-    # Normaliser les espaces multiples
-    keyword = ' '.join(keyword.split())
-    
-    return keyword.strip()
-
-def deduplicate_keywords_with_origins(enriched_keywords):
-    """Déduplique les mots-clés et fusionne les origines multiples"""
-    if not enriched_keywords:
-        return []
-    
-    # Dictionnaire pour regrouper par mot-clé normalisé
-    normalized_keywords = {}
-    
-    for keyword_data in enriched_keywords:
-        original_keyword = keyword_data.get('keyword', '')
-        normalized = normalize_keyword(original_keyword)
-        
-        if normalized not in normalized_keywords:
-            # Premier mot-clé de ce groupe
-            normalized_keywords[normalized] = {
-                'keyword': original_keyword,  # Garder la version originale
-                'search_volume': keyword_data.get('search_volume', 0),
-                'cpc': keyword_data.get('cpc', 0),
-                'competition': keyword_data.get('competition', 0),
-                'competition_level': keyword_data.get('competition_level', 'UNKNOWN'),
-                'sources': set(),  # Utiliser un set pour éviter les doublons d'origine
-                'type': keyword_data.get('type', 'original')
-            }
-        else:
-            # Fusionner avec le mot-clé existant
-            existing = normalized_keywords[normalized]
-            
-            # Prendre les meilleures valeurs (volume max, etc.)
-            if keyword_data.get('search_volume', 0) > existing['search_volume']:
-                existing['search_volume'] = keyword_data.get('search_volume', 0)
-            if keyword_data.get('cpc', 0) > existing['cpc']:
-                existing['cpc'] = keyword_data.get('cpc', 0)
-            if keyword_data.get('competition', 0) > existing['competition']:
-                existing['competition'] = keyword_data.get('competition', 0)
-        
-        # Déterminer l'origine pour ce mot-clé
-        source = keyword_data.get('source', 'google_suggest')
-        if source == 'google_ads':
-            normalized_keywords[normalized]['sources'].add('💰 Suggestion Ads')
-        else:
-            # Vérifier si c'est un mot-clé principal
-            if keyword_data.get('type') == 'original':
-                normalized_keywords[normalized]['sources'].add('🎯 Mot-clé principal')
-            else:
-                normalized_keywords[normalized]['sources'].add('🔍 Suggestion Google')
-    
-    # Convertir en liste avec origines concaténées
-    result = []
-    for normalized, data in normalized_keywords.items():
-        # Joindre toutes les sources
-        origins = sorted(list(data['sources']))  # Trier pour un ordre cohérent
-        data['origine'] = ' + '.join(origins)
-        
-        # Nettoyer les sources du dictionnaire
-        del data['sources']
-        
-        result.append(data)
-    
-    return result
-
 def render_analysis_tab(config_manager, google_client, question_generator,
-                       api_key, enable_dataforseo, dataforseo_config, analysis_options):
+                       dataforseo_service, api_key, analysis_options):
     """Onglet d'analyse principal"""
     
     st.markdown("### 🔍 Analyse basée sur les suggestions Google")
@@ -178,7 +99,9 @@ def render_analysis_tab(config_manager, google_client, question_generator,
     # Configuration des niveaux
     levels_config = config_manager.render_suggestion_levels()
     
-    # Suppression de l'estimation des coûts DataForSEO
+    # Estimation des coûts DataForSEO si configuré
+    if dataforseo_service and dataforseo_service.is_configured():
+        render_cost_estimation(keywords_input, levels_config, dataforseo_service)
     
     # Boutons d'action
     col_analyze, col_clear = st.columns([4, 1])
@@ -187,7 +110,7 @@ def render_analysis_tab(config_manager, google_client, question_generator,
         if keywords_input and st.button("🚀 Analyser les suggestions", type="primary"):
             run_analysis(
                 keywords_input, levels_config, google_client, question_generator,
-                api_key, enable_dataforseo, dataforseo_config, analysis_options
+                dataforseo_service, api_key, analysis_options
             )
     
     with col_clear:
@@ -197,9 +120,33 @@ def render_analysis_tab(config_manager, google_client, question_generator,
     # Affichage des résultats
     render_results_section(question_generator, analysis_options)
 
+def render_cost_estimation(keywords_input, levels_config, dataforseo_service):
+    """Afficher l'estimation des coûts DataForSEO"""
+    if not keywords_input:
+        return
+    
+    keywords = [kw.strip() for kw in keywords_input.split('\n') if kw.strip()]
+    estimated_suggestions = len(keywords) * (
+        levels_config['level1_count'] + 
+        (levels_config['level2_count'] if levels_config['enable_level2'] else 0) +
+        (levels_config['level3_count'] if levels_config['enable_level3'] else 0)
+    )
+    
+    total_keywords = len(keywords) + estimated_suggestions
+    cost_info = dataforseo_service.estimate_cost(total_keywords, True)
+    
+    with st.expander("💰 Estimation des coûts DataForSEO"):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Mots-clés estimés", total_keywords)
+        with col2:
+            st.metric("Coût volumes", f"${cost_info['search_volume_cost']:.2f}")
+        with col3:
+            st.metric("Coût total estimé", f"${cost_info['total_cost']:.2f}")
+
 def run_analysis(keywords_input, levels_config, google_client, question_generator,
-                api_key, enable_dataforseo, dataforseo_config, analysis_options):
-    """Exécution de l'analyse"""
+                dataforseo_service, api_key, analysis_options):
+    """Exécution de l'analyse avec workflow manager"""
     
     keywords = [kw.strip() for kw in keywords_input.split('\n') if kw.strip()]
     
@@ -217,47 +164,71 @@ def run_analysis(keywords_input, levels_config, google_client, question_generato
     st.session_state.analysis_results = None
     st.session_state.analysis_metadata = None
     
+    # Initialisation du workflow
+    workflow = WorkflowManager()
+    workflow.initialize_workflow(
+        enable_dataforseo=bool(dataforseo_service and dataforseo_service.is_configured()),
+        generate_questions=current_generate_questions
+    )
+    workflow.start_workflow()
+    
     try:
-        # Étape 1: Collecte des suggestions
+        # Étape 1: Collecte des suggestions Google
+        workflow.update_step("collect_suggestions", "running")
         all_suggestions = collect_google_suggestions(
             keywords, levels_config, google_client, analysis_options['language']
         )
         
         if not all_suggestions:
+            workflow.error_step("collect_suggestions", "Aucune suggestion trouvée")
             st.error("❌ Aucune suggestion trouvée")
             return
         
+        workflow.complete_step("collect_suggestions")
+        
         # Étape 2: Enrichissement DataForSEO (optionnel)
         enriched_data = {}
-        if enable_dataforseo and dataforseo_config.get('login') and dataforseo_config.get('password'):
-            enriched_data = enrich_with_dataforseo(
-                keywords, all_suggestions, dataforseo_config
-            )
+        if dataforseo_service and dataforseo_service.is_configured():
+            workflow.update_step("dataforseo_volumes", "running")
+            
+            suggestion_texts = [s['Suggestion Google'] for s in all_suggestions]
+            enriched_data = dataforseo_service.process_complete_analysis(keywords, suggestion_texts)
+            
+            if enriched_data:
+                workflow.complete_step("dataforseo_volumes")
+                if "dataforseo_ads" in [step.name for step in workflow.steps]:
+                    workflow.complete_step("dataforseo_ads")  # Ads inclus dans process_complete_analysis
+            else:
+                workflow.error_step("dataforseo_volumes", "Erreur lors de l'enrichissement DataForSEO")
         
         # Étape 3: Analyse des thèmes (si demandée)
         themes_analysis = {}
         if current_generate_questions:
-            themes_analysis = analyze_themes(
+            workflow.update_step("analyze_themes", "running")
+            themes_analysis = analyze_themes_with_volume_filter(
                 keywords, all_suggestions, enriched_data, 
                 question_generator, analysis_options['language']
             )
+            workflow.complete_step("analyze_themes")
         
-        # Sauvegarde des résultats
+        # Finalisation
+        workflow.update_step("finalize", "running")
         save_analysis_results(
             all_suggestions, enriched_data, themes_analysis,
             keywords, levels_config, current_generate_questions, analysis_options
         )
+        workflow.complete_step("finalize")
         
+        workflow.finish_workflow()
         st.success("✅ Analyse terminée!")
         st.rerun()
         
     except Exception as e:
+        workflow.finish_workflow()
         st.error(f"❌ Erreur lors de l'analyse: {str(e)}")
 
 def collect_google_suggestions(keywords, levels_config, google_client, language):
     """Collecte des suggestions Google"""
-    st.info("⏳ Collecte des suggestions Google...")
-    
     all_suggestions = []
     for keyword in keywords:
         suggestions = google_client.get_multilevel_suggestions(
@@ -273,27 +244,8 @@ def collect_google_suggestions(keywords, levels_config, google_client, language)
     
     return all_suggestions
 
-def enrich_with_dataforseo(keywords, all_suggestions, dataforseo_config):
-    """Enrichissement avec DataForSEO"""
-    from dataforseo_client import DataForSEOClient
-    
-    client = DataForSEOClient()
-    client.set_credentials(dataforseo_config['login'], dataforseo_config['password'])
-    
-    suggestion_texts = [s['Suggestion Google'] for s in all_suggestions if s['Niveau'] > 0]
-    
-    return client.process_keywords_complete(
-        keywords,
-        suggestion_texts,
-        dataforseo_config['language'],
-        dataforseo_config['location'],
-        dataforseo_config['min_volume']
-    )
-
-def analyze_themes(keywords, all_suggestions, enriched_data, question_generator, language):
+def analyze_themes_with_volume_filter(keywords, all_suggestions, enriched_data, question_generator, language):
     """Analyse des thèmes uniquement sur les mots-clés avec volume de recherche"""
-    st.info("⏳ Analyse des thèmes...")
-    
     themes_by_keyword = {}
     
     # Filtrer uniquement les mots-clés avec volume de recherche
@@ -304,9 +256,8 @@ def analyze_themes(keywords, all_suggestions, enriched_data, question_generator,
         st.warning("⚠️ Aucun mot-clé avec volume de recherche trouvé pour l'analyse des thèmes")
         return {}
     
-    # Grouper par mot-clé principal d'origine
     for keyword in keywords:
-        # Trouver tous les mots-clés enrichis avec volume liés à ce mot-clé principal
+        # Trouver les mots-clés et suggestions associés avec volume
         related_keywords_with_volume = []
         
         # Mots-clés principaux avec volume
@@ -319,18 +270,7 @@ def analyze_themes(keywords, all_suggestions, enriched_data, question_generator,
                 suggestion_with_volume = [k for k in keywords_with_volume if k['keyword'].lower() == suggestion['Suggestion Google'].lower()]
                 related_keywords_with_volume.extend(suggestion_with_volume)
         
-        # Suggestions Ads avec volume (déjà filtrées car dans keywords_with_volume)
-        ads_suggestions = [k for k in keywords_with_volume if k.get('source') == 'google_ads']
-        for ads_suggestion in ads_suggestions:
-            # Associer les suggestions Ads aux mots-clés principaux
-            if any(kw.lower() in ads_suggestion.get('source_keyword', '').lower() or 
-                  ads_suggestion.get('source_keyword', '').lower() in kw.lower() 
-                  for kw in [keyword]):
-                if ads_suggestion not in related_keywords_with_volume:
-                    related_keywords_with_volume.append(ads_suggestion)
-        
         if related_keywords_with_volume:
-            # Créer des suggestions fictives pour l'analyse des thèmes
             fake_suggestions = [
                 {
                     'Mot-clé': keyword,
@@ -342,7 +282,7 @@ def analyze_themes(keywords, all_suggestions, enriched_data, question_generator,
                     'Competition': enriched_kw.get('competition_level', 'UNKNOWN')
                 }
                 for enriched_kw in related_keywords_with_volume
-                if enriched_kw['keyword'] != keyword  # Exclure le mot-clé principal
+                if enriched_kw['keyword'] != keyword
             ]
             
             if fake_suggestions:
@@ -369,9 +309,9 @@ def save_analysis_results(all_suggestions, enriched_data, themes_analysis,
         'all_suggestions': all_suggestions,
         'level_counts': level_counts,
         'themes_analysis': themes_analysis,
-        'enriched_keywords': deduplicated_keywords,  # Utiliser la version dédupliquée
+        'enriched_keywords': deduplicated_keywords,
         'dataforseo_data': enriched_data,
-        'stage': 'themes_analyzed'
+        'stage': 'themes_analyzed' if themes_analysis else 'suggestions_collected'
     }
     
     st.session_state.analysis_metadata = {
@@ -384,7 +324,7 @@ def save_analysis_results(all_suggestions, enriched_data, themes_analysis,
     }
 
 def render_results_section(question_generator, analysis_options):
-    """Affichage de la section résultats"""
+    """Affichage de la section résultats avec le nouveau gestionnaire"""
     
     if not st.session_state.analysis_results:
         return
@@ -392,18 +332,29 @@ def render_results_section(question_generator, analysis_options):
     results = st.session_state.analysis_results
     metadata = st.session_state.analysis_metadata
     
-    # Interface de sélection des thèmes
+    # Utiliser le gestionnaire de résultats
+    results_manager = ResultsManager(results, metadata)
+    
+    # Afficher le résumé
+    results_manager.render_analysis_summary()
+    
+    # Interface de sélection des thèmes (si applicable)
     if (results.get('stage') == 'themes_analyzed' and 
         metadata.get('generate_questions')):
         render_theme_selection(question_generator, analysis_options['language'])
     
     # Affichage des résultats finaux
     elif results.get('stage') == 'questions_generated':
-        render_final_results()
+        results_manager.render_conversational_questions()
+        results_manager.render_keywords_with_volume()
+        results_manager.render_detailed_analysis()
     
-    # Affichage des suggestions seulement
-    elif results.get('all_suggestions'):
-        render_suggestions_only()
+    # Affichage des suggestions et mots-clés enrichis
+    else:
+        results_manager.render_suggestions_results()
+        if results.get('enriched_keywords'):
+            results_manager.render_keywords_with_volume()
+            results_manager.render_detailed_analysis()
 
 def render_theme_selection(question_generator, language):
     """Interface de sélection des thèmes - uniquement pour mots-clés avec volume"""
@@ -426,12 +377,8 @@ def render_theme_selection(question_generator, language):
     
     for keyword, themes in themes_analysis.items():
         if themes:
-            # Vérifier si ce mot-clé a du volume (lui ou ses suggestions)
-            has_volume = False
-            
-            # Vérifier le mot-clé principal
-            if keyword in keywords_with_volume:
-                has_volume = True
+            # Vérifier si ce mot-clé a du volume
+            has_volume = keyword in keywords_with_volume
             
             # Vérifier les suggestions associées
             if not has_volume:
@@ -460,9 +407,6 @@ def render_theme_selection(question_generator, language):
                             if keyword not in selected_themes_by_keyword:
                                 selected_themes_by_keyword[keyword] = []
                             selected_themes_by_keyword[keyword].append(theme)
-            else:
-                st.markdown(f"### ⚪ Thèmes pour '{keyword}' (sans volume de recherche - ignoré)")
-                st.caption("Ce mot-clé et ses suggestions n'ont pas de volume de recherche significatif")
     
     # Bouton de génération
     if selected_themes_by_keyword:
@@ -473,400 +417,40 @@ def render_theme_selection(question_generator, language):
             generate_questions_from_themes(
                 selected_themes_by_keyword, question_generator, language
             )
-    else:
-        st.warning("⚠️ Aucun thème sélectionné pour des mots-clés avec volume de recherche")
 
 def generate_questions_from_themes(selected_themes_by_keyword, question_generator, language):
-    """Génération des questions à partir des thèmes sélectionnés - uniquement pour mots-clés avec volume"""
+    """Génération des questions à partir des thèmes sélectionnés"""
     
     metadata = st.session_state.analysis_metadata
     final_questions_count = metadata.get('final_questions_count', 20)
     
-    # Filtrer les thèmes pour ne garder que ceux des mots-clés avec volume
-    results = st.session_state.analysis_results
-    enriched_keywords = results.get('enriched_keywords', [])
-    keywords_with_volume = [k['keyword'] for k in enriched_keywords if k.get('search_volume', 0) > 0]
-    
-    # Filtrer les thèmes sélectionnés
-    filtered_themes_by_keyword = {}
-    for keyword, themes in selected_themes_by_keyword.items():
-        # Vérifier si ce mot-clé ou ses suggestions ont du volume
-        has_volume = False
-        
-        # Vérifier le mot-clé principal
-        if keyword in keywords_with_volume:
-            has_volume = True
-        
-        # Vérifier les suggestions associées
-        if not has_volume:
-            keyword_suggestions = [s['Suggestion Google'] for s in results.get('all_suggestions', []) 
-                                 if s['Mot-clé'] == keyword]
-            for suggestion in keyword_suggestions:
-                if suggestion in keywords_with_volume:
-                    has_volume = True
-                    break
-        
-        if has_volume:
-            filtered_themes_by_keyword[keyword] = themes
-    
-    if not filtered_themes_by_keyword:
-        st.warning("⚠️ Aucun thème sélectionné ne correspond à des mots-clés avec volume de recherche")
-        return
-    
-    st.info(f"💡 Génération de questions pour {len(filtered_themes_by_keyword)} mots-clés avec volume de recherche")
-    
     all_questions_data = []
     
-    for keyword, themes in filtered_themes_by_keyword.items():
+    for keyword, themes in selected_themes_by_keyword.items():
         questions = question_generator.generate_questions_from_themes(
-            keyword, themes, final_questions_count // len(filtered_themes_by_keyword), language
+            keyword, themes, final_questions_count // len(selected_themes_by_keyword), language
         )
         
         for q in questions:
             q['Mot-clé'] = keyword
-            # Associer le volume de recherche si disponible
-            matching_keyword = next((k for k in enriched_keywords 
-                                   if k['keyword'].lower() == q.get('Suggestion Google', '').lower()), None)
-            if matching_keyword:
-                q['Volume_Recherche'] = matching_keyword.get('search_volume', 0)
-                q['CPC'] = matching_keyword.get('cpc', 0)
-                q['Source'] = matching_keyword.get('source', 'google_suggest')
-            
             all_questions_data.append(q)
     
-    # Tri par volume de recherche puis par score d'importance
+    # Tri par score d'importance
     sorted_questions = sorted(
         all_questions_data,
-        key=lambda x: (x.get('Volume_Recherche', 0), x.get('Score_Importance', 0)),
+        key=lambda x: x.get('Score_Importance', 0),
         reverse=True
     )[:final_questions_count]
     
     # Sauvegarde
     st.session_state.analysis_results.update({
         'final_consolidated_data': sorted_questions,
-        'selected_themes_by_keyword': filtered_themes_by_keyword,
+        'selected_themes_by_keyword': selected_themes_by_keyword,
         'stage': 'questions_generated'
     })
     
-    st.success(f"🎉 {len(sorted_questions)} questions générées à partir de mots-clés avec volume de recherche!")
+    st.success(f"🎉 {len(sorted_questions)} questions générées!")
     st.rerun()
-
-def render_final_results():
-    """Affichage des résultats finaux"""
-    results = st.session_state.analysis_results
-    metadata = st.session_state.analysis_metadata
-    
-    st.markdown("---")
-    st.markdown("## 📊 Résultats finaux")
-    
-    # Métriques principales
-    metrics = {
-        "Mots-clés": len(metadata['keywords']),
-        "Suggestions": len(results['all_suggestions']),
-        "Questions": len(results['final_consolidated_data']),
-        "Thèmes sélectionnés": sum(len(themes) for themes in results.get('selected_themes_by_keyword', {}).values())
-    }
-    
-    # Ajouter métriques DataForSEO si disponible
-    if results.get('enriched_keywords'):
-        enriched_keywords = results['enriched_keywords']
-        keywords_with_volume = [k for k in enriched_keywords if k.get('search_volume', 0) > 0]
-        
-        # Compter les suggestions Ads (celles qui contiennent cette origine)
-        ads_keywords = [k for k in enriched_keywords if '💰 Suggestion Ads' in k.get('origine', '')]
-        
-        metrics.update({
-            "Avec volume": len(keywords_with_volume),
-            "Suggestions Ads": len(ads_keywords)
-        })
-    
-    render_metrics(metrics)
-    
-    # Afficher la liste des mots-clés avec volume AVANT les questions
-    if results.get('enriched_keywords'):
-        render_keywords_with_volume_list(results)
-    
-    # Tableau des questions avec volumes si disponible
-    if results.get('final_consolidated_data'):
-        st.markdown("### 📋 Questions conversationnelles")
-        st.info("💡 Ces questions sont générées uniquement à partir des mots-clés ayant un volume de recherche")
-        
-        df = pd.DataFrame(results['final_consolidated_data'])
-        
-        # Si on a des données enrichies, essayer de les associer aux questions
-        if results.get('enriched_keywords'):
-            enriched_df = pd.DataFrame(results['enriched_keywords'])
-            if not enriched_df.empty and 'keyword' in enriched_df.columns:
-                # Merger les données de volume avec les questions
-                merged_df = df.merge(
-                    enriched_df[['keyword', 'search_volume', 'cpc', 'origine']],
-                    left_on='Suggestion Google',
-                    right_on='keyword',
-                    how='left'
-                )
-                
-                display_cols = ['Question Conversationnelle', 'Suggestion Google', 'Thème', 'Intention', 'Score_Importance', 'search_volume', 'cpc', 'origine']
-                available_cols = [col for col in display_cols if col in merged_df.columns]
-                
-                display_df = merged_df[available_cols].copy()
-                
-                # Renommer et formater les colonnes
-                column_mapping = {
-                    'search_volume': 'Volume',
-                    'cpc': 'CPC',
-                    'origine': 'Origine'
-                }
-                display_df = display_df.rename(columns=column_mapping)
-                
-                if 'Volume' in display_df.columns:
-                    display_df['Volume'] = display_df['Volume'].fillna(0).astype(int)
-                if 'CPC' in display_df.columns:
-                    display_df['CPC'] = display_df['CPC'].fillna(0).round(2)
-                
-                st.dataframe(display_df, width='stretch')
-            else:
-                # Fallback sans données de volume
-                display_cols = ['Question Conversationnelle', 'Suggestion Google', 'Thème', 'Intention', 'Score_Importance']
-                available_cols = [col for col in display_cols if col in df.columns]
-                st.dataframe(df[available_cols], width='stretch')
-        else:
-            # Pas de données DataForSEO
-            display_cols = ['Question Conversationnelle', 'Suggestion Google', 'Thème', 'Intention', 'Score_Importance']
-            available_cols = [col for col in display_cols if col in df.columns]
-            st.dataframe(df[available_cols], width='stretch')
-    
-    # Afficher aussi l'analyse des mots-clés si DataForSEO activé
-    if results.get('enriched_keywords'):
-        with st.expander("📈 Analyse détaillée des mots-clés et volumes"):
-            render_detailed_keywords_analysis(results)
-
-def render_keywords_with_volume_list(results):
-    """Affichage de la liste des mots-clés avec volume de recherche utilisés pour les questions"""
-    st.markdown("### 🎯 Mots-clés avec volume de recherche")
-    st.info("📊 Ces mots-clés ont été utilisés pour générer les questions conversationnelles")
-    
-    enriched_keywords = results.get('enriched_keywords', [])
-    keywords_with_volume = [k for k in enriched_keywords if k.get('search_volume', 0) > 0]
-    
-    if not keywords_with_volume:
-        st.warning("⚠️ Aucun mot-clé avec volume de recherche trouvé")
-        return
-    
-    # Créer le DataFrame avec les données dédupliquées
-    keywords_df = pd.DataFrame(keywords_with_volume)
-    
-    # Préparer l'affichage avec la colonne origine fusionnée
-    display_cols = ['keyword', 'search_volume', 'cpc', 'competition_level', 'origine']
-    available_cols = [col for col in display_cols if col in keywords_df.columns]
-    
-    display_keywords = keywords_df[available_cols].copy()
-    display_keywords.columns = ['Mot-clé', 'Volume/mois', 'CPC', 'Concurrence', 'Origine']
-    
-    # Formater les colonnes
-    display_keywords['Volume/mois'] = display_keywords['Volume/mois'].fillna(0).astype(int)
-    display_keywords['CPC'] = display_keywords['CPC'].fillna(0).round(2)
-    
-    # Trier par volume décroissant
-    display_keywords = display_keywords.sort_values('Volume/mois', ascending=False)
-    
-    # Afficher avec mise en forme
-    st.dataframe(display_keywords, width='stretch')
-    
-    # Statistiques rapides
-    col1, col2, col3, col4 = st.columns(4)
-    
-    total_volume = display_keywords['Volume/mois'].sum()
-    avg_volume = display_keywords['Volume/mois'].mean()
-    max_volume = display_keywords['Volume/mois'].max()
-    avg_cpc = display_keywords['CPC'].mean()
-    
-    with col1:
-        st.metric("Volume total", f"{total_volume:,}")
-    with col2:
-        st.metric("Volume moyen", f"{avg_volume:.0f}")
-    with col3:
-        st.metric("Volume max", f"{max_volume:,}")
-    with col4:
-        st.metric("CPC moyen", f"${avg_cpc:.2f}")
-    
-    # Analyse des origines (compter les mots-clés par type d'origine)
-    st.markdown("**Répartition par origine:**")
-    
-    # Compter les occurrences de chaque type d'origine
-    origin_stats = {
-        '🎯 Mot-clé principal': 0,
-        '🔍 Suggestion Google': 0,
-        '💰 Suggestion Ads': 0,
-        'Multiples origines': 0
-    }
-    
-    for origin in display_keywords['Origine']:
-        if '+' in origin:  # Multiple origines
-            origin_stats['Multiples origines'] += 1
-        elif '🎯 Mot-clé principal' in origin:
-            origin_stats['🎯 Mot-clé principal'] += 1
-        elif '💰 Suggestion Ads' in origin:
-            origin_stats['💰 Suggestion Ads'] += 1
-        elif '🔍 Suggestion Google' in origin:
-            origin_stats['🔍 Suggestion Google'] += 1
-    
-    for origin, count in origin_stats.items():
-        if count > 0:
-            st.write(f"- {origin}: {count} mots-clés")
-
-def render_final_results():
-    """Affichage des résultats finaux"""
-    results = st.session_state.analysis_results
-    metadata = st.session_state.analysis_metadata
-    
-    st.markdown("---")
-    st.markdown("## 📊 Résultats finaux")
-    
-    # Métriques principales
-    metrics = {
-        "Mots-clés": len(metadata['keywords']),
-        "Suggestions": len(results['all_suggestions']),
-        "Questions": len(results['final_consolidated_data']),
-        "Thèmes sélectionnés": sum(len(themes) for themes in results.get('selected_themes_by_keyword', {}).values())
-    }
-    
-    # Ajouter métriques DataForSEO si disponible
-    if results.get('enriched_keywords'):
-        enriched_keywords = results['enriched_keywords']
-        keywords_with_volume = [k for k in enriched_keywords if k.get('search_volume', 0) > 0]
-        
-        # Compter les suggestions Ads (celles qui contiennent cette origine)
-        ads_keywords = [k for k in enriched_keywords if '💰 Suggestion Ads' in k.get('origine', '')]
-        
-        metrics.update({
-            "Avec volume": len(keywords_with_volume),
-            "Suggestions Ads": len(ads_keywords)
-        })
-    
-    render_metrics(metrics)
-    
-    # Afficher la liste des mots-clés avec volume AVANT les questions
-    if results.get('enriched_keywords'):
-        render_keywords_with_volume_list(results)
-    
-    # Tableau des questions avec volumes si disponible
-    if results.get('final_consolidated_data'):
-        st.markdown("### 📋 Questions conversationnelles")
-        st.info("💡 Ces questions sont générées uniquement à partir des mots-clés ayant un volume de recherche")
-        
-        df = pd.DataFrame(results['final_consolidated_data'])
-        
-        # Si on a des données enrichies, essayer de les associer aux questions
-        if results.get('enriched_keywords'):
-            enriched_df = pd.DataFrame(results['enriched_keywords'])
-            if not enriched_df.empty and 'keyword' in enriched_df.columns:
-                # Merger les données de volume avec les questions
-                merged_df = df.merge(
-                    enriched_df[['keyword', 'search_volume', 'cpc', 'origine']],
-                    left_on='Suggestion Google',
-                    right_on='keyword',
-                    how='left'
-                )
-                
-                display_cols = ['Question Conversationnelle', 'Suggestion Google', 'Thème', 'Intention', 'Score_Importance', 'search_volume', 'cpc', 'origine']
-                available_cols = [col for col in display_cols if col in merged_df.columns]
-                
-                display_df = merged_df[available_cols].copy()
-                
-                # Renommer et formater les colonnes
-                column_mapping = {
-                    'search_volume': 'Volume',
-                    'cpc': 'CPC',
-                    'origine': 'Origine'
-                }
-                display_df = display_df.rename(columns=column_mapping)
-                
-                if 'Volume' in display_df.columns:
-                    display_df['Volume'] = display_df['Volume'].fillna(0).astype(int)
-                if 'CPC' in display_df.columns:
-                    display_df['CPC'] = display_df['CPC'].fillna(0).round(2)
-                
-                st.dataframe(display_df, width='stretch')
-            else:
-                # Fallback sans données de volume
-                display_cols = ['Question Conversationnelle', 'Suggestion Google', 'Thème', 'Intention', 'Score_Importance']
-                available_cols = [col for col in display_cols if col in df.columns]
-                st.dataframe(df[available_cols], width='stretch')
-        else:
-            # Pas de données DataForSEO
-            display_cols = ['Question Conversationnelle', 'Suggestion Google', 'Thème', 'Intention', 'Score_Importance']
-            available_cols = [col for col in display_cols if col in df.columns]
-            st.dataframe(df[available_cols], width='stretch')
-    
-    # Afficher aussi l'analyse des mots-clés si DataForSEO activé
-    if results.get('enriched_keywords'):
-        with st.expander("📈 Analyse détaillée des mots-clés et volumes"):
-            render_detailed_keywords_analysis(results)
-
-def render_detailed_keywords_analysis(results):
-    """Affichage détaillé de l'analyse des mots-clés dédupliqués"""
-    enriched_keywords = results.get('enriched_keywords', [])
-    
-    if not enriched_keywords:
-        st.info("Aucune donnée enrichie disponible")
-        return
-    
-    # Séparer par type d'origine principale
-    google_suggest_keywords = [k for k in enriched_keywords if '🔍 Suggestion Google' in k.get('origine', '') and '💰 Suggestion Ads' not in k.get('origine', '')]
-    google_ads_keywords = [k for k in enriched_keywords if '💰 Suggestion Ads' in k.get('origine', '') and '🔍 Suggestion Google' not in k.get('origine', '')]
-    main_keywords = [k for k in enriched_keywords if '🎯 Mot-clé principal' in k.get('origine', '')]
-    mixed_keywords = [k for k in enriched_keywords if '+' in k.get('origine', '')]
-    
-    tab1, tab2, tab3, tab4 = st.tabs(["🎯 Principaux", "🔍 Google Suggest", "💰 Google Ads", "🔗 Multiples origines"])
-    
-    with tab1:
-        if main_keywords:
-            st.markdown(f"**{len(main_keywords)} mots-clés principaux**")
-            df = pd.DataFrame(main_keywords)
-            display_df = df[['keyword', 'search_volume', 'cpc', 'competition_level']].copy()
-            display_df.columns = ['Mot-clé', 'Volume', 'CPC', 'Concurrence']
-            display_df['Volume'] = display_df['Volume'].fillna(0).astype(int)
-            display_df['CPC'] = display_df['CPC'].fillna(0).round(2)
-            st.dataframe(display_df.sort_values('Volume', ascending=False), width='stretch')
-        else:
-            st.info("Aucun mot-clé principal avec volume")
-    
-    with tab2:
-        if google_suggest_keywords:
-            st.markdown(f"**{len(google_suggest_keywords)} suggestions Google**")
-            df = pd.DataFrame(google_suggest_keywords)
-            display_df = df[['keyword', 'search_volume', 'cpc', 'competition_level']].copy()
-            display_df.columns = ['Mot-clé', 'Volume', 'CPC', 'Concurrence']
-            display_df['Volume'] = display_df['Volume'].fillna(0).astype(int)
-            display_df['CPC'] = display_df['CPC'].fillna(0).round(2)
-            st.dataframe(display_df.sort_values('Volume', ascending=False), width='stretch')
-        else:
-            st.info("Aucune suggestion Google avec volume")
-    
-    with tab3:
-        if google_ads_keywords:
-            st.markdown(f"**{len(google_ads_keywords)} suggestions Google Ads**")
-            df = pd.DataFrame(google_ads_keywords)
-            display_df = df[['keyword', 'search_volume', 'cpc', 'competition_level']].copy()
-            display_df.columns = ['Mot-clé', 'Volume', 'CPC', 'Concurrence']
-            display_df['Volume'] = display_df['Volume'].fillna(0).astype(int)
-            display_df['CPC'] = display_df['CPC'].fillna(0).round(2)
-            st.dataframe(display_df.sort_values('Volume', ascending=False), width='stretch')
-        else:
-            st.info("Aucune suggestion Ads avec volume")
-    
-    with tab4:
-        if mixed_keywords:
-            st.markdown(f"**{len(mixed_keywords)} mots-clés avec multiples origines**")
-            st.info("Ces mots-clés apparaissent dans plusieurs sources (mot-clé principal + suggestions)")
-            df = pd.DataFrame(mixed_keywords)
-            display_df = df[['keyword', 'search_volume', 'cpc', 'competition_level', 'origine']].copy()
-            display_df.columns = ['Mot-clé', 'Volume', 'CPC', 'Concurrence', 'Origines']
-            display_df['Volume'] = display_df['Volume'].fillna(0).astype(int)
-            display_df['CPC'] = display_df['CPC'].fillna(0).round(2)
-            st.dataframe(display_df.sort_values('Volume', ascending=False), width='stretch')
-        else:
-            st.info("Aucun mot-clé avec multiples origines")
 
 def render_instructions_tab():
     """Onglet des instructions"""
@@ -900,42 +484,6 @@ def clear_results():
     st.session_state.analysis_results = None
     st.session_state.analysis_metadata = None
     st.rerun()
-
-def render_suggestions_only():
-    """Afficher uniquement les suggestions générées"""
-    if 'suggestions_data' in st.session_state and st.session_state.suggestions_data:
-        suggestions = st.session_state.suggestions_data
-        
-        st.subheader("📝 Suggestions générées")
-        
-        # Afficher les statistiques
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Total suggestions", len(suggestions))
-        with col2:
-            unique_suggestions = len(set(suggestions))
-            st.metric("Suggestions uniques", unique_suggestions)
-        with col3:
-            if len(suggestions) > 0:
-                duplication_rate = (1 - unique_suggestions / len(suggestions)) * 100
-                st.metric("Taux de duplication", f"{duplication_rate:.1f}%")
-        
-        # Afficher la liste des suggestions
-        st.write("**Liste des suggestions:**")
-        suggestions_df = pd.DataFrame(suggestions, columns=['Suggestion'])
-        suggestions_df.index = suggestions_df.index + 1  # Commencer l'index à 1
-        st.dataframe(suggestions_df, use_container_width=True)
-        
-        # Option de téléchargement
-        csv_data = "\n".join(suggestions)
-        st.download_button(
-            label="📥 Télécharger les suggestions (TXT)",
-            data=csv_data,
-            file_name=f"suggestions_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.txt",
-            mime="text/plain"
-        )
-    else:
-        st.info("Aucune suggestion disponible. Lancez d'abord une génération de questions.")
 
 if __name__ == "__main__":
     main()
