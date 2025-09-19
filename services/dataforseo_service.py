@@ -1,6 +1,7 @@
 import streamlit as st
 from typing import List, Dict, Any, Tuple
 from dataforseo_client import DataForSEOClient
+from utils.keyword_utils import deduplicate_keywords_with_origins
 
 class DataForSEOService:
     """Service pour gérer les interactions avec DataForSEO"""
@@ -106,12 +107,15 @@ class DataForSEOService:
                 keywords, volume_results.get('volume_data', []), ads_suggestions
             )
             
+            # Étape 4: Déduplication des mots-clés
+            deduplicated_keywords = deduplicate_keywords_with_origins(enriched_keywords)
+            
             return {
                 'volume_data': volume_results.get('volume_data', []),
                 'ads_suggestions': ads_suggestions,
-                'enriched_keywords': enriched_keywords,
+                'enriched_keywords': deduplicated_keywords,
                 'keywords_with_volume': volume_results.get('keywords_with_volume', []),
-                'total_keywords': len(enriched_keywords)
+                'total_keywords': len(deduplicated_keywords)
             }
             
         except Exception as e:
