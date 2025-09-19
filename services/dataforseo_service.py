@@ -208,13 +208,36 @@ class DataForSEOService:
         return enriched_keywords
 
     def _sanitize_numeric_fields(self, item: Dict[str, Any]) -> None:
-        """S'assurer que tous les champs numériques ne sont pas None"""
-        if item.get('search_volume') is None:
+        """S'assurer que tous les champs numériques ne sont pas None et convertir les chaînes en nombres"""
+        # Conversion sécurisée pour search_volume (en entier, car les volumes sont généralement des entiers)
+        search_volume = item.get('search_volume')
+        if search_volume is None:
             item['search_volume'] = 0
-        if item.get('cpc') is None:
+        else:
+            try:
+                item['search_volume'] = int(float(search_volume))  # Conversion via float pour gérer les décimaux, puis int
+            except (ValueError, TypeError):
+                item['search_volume'] = 0
+        
+        # Conversion pour cpc (en float)
+        cpc = item.get('cpc')
+        if cpc is None:
             item['cpc'] = 0.0
-        if item.get('competition') is None:
+        else:
+            try:
+                item['cpc'] = float(cpc)
+            except (ValueError, TypeError):
+                item['cpc'] = 0.0
+        
+        # Conversion pour competition (en float)
+        competition = item.get('competition')
+        if competition is None:
             item['competition'] = 0.0
+        else:
+            try:
+                item['competition'] = float(competition)
+            except (ValueError, TypeError):
+                item['competition'] = 0.0
 
     def estimate_cost(self, keywords_count: int, enable_ads_suggestions: bool = True) -> Dict[str, Any]:
         """Estimer le coût des requêtes DataForSEO"""
