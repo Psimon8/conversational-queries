@@ -3,7 +3,8 @@ from typing import Dict, Any, Tuple
 from dataforseo_client import DataForSEOClient
 
 class ConfigManager:
-    """Gestionnaire centralisé de la configuration avec interface améliorée"""
+    """Gestionnaire centrali            # Volume minimum avec slider amélioré
+            st.markdown("**📊 Filtrage par volume**") de la configuration avec interface améliorée"""
     
     def __init__(self):
         self.config = {}
