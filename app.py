@@ -9,10 +9,10 @@ from utils.config_manager import ConfigManager
 from utils.export_manager import ExportManager
 from utils.workflow_manager import WorkflowManager
 from utils.results_manager import ResultsManager
+from utils.keyword_utils import normalize_keyword, deduplicate_keywords_with_origins
 from services.dataforseo_service import DataForSEOService
 from question_generator import QuestionGenerator
 from google_suggestions import GoogleSuggestionsClient
-from dataforseo_client import normalize_keyword, deduplicate_keywords_with_origins
 
 def main():
     """Fonction principale de l'application"""
