@@ -29,9 +29,10 @@ def main():
     # Gestionnaire de configuration
     config_manager = ConfigManager()
     
-    # Configuration dans la sidebar
-    api_key = config_manager.render_openai_config()
-    enable_dataforseo, dataforseo_config = config_manager.render_dataforseo_config()
+    # Configuration centralisée des credentials
+    api_key, enable_dataforseo, dataforseo_config = config_manager.render_credentials_section()
+    
+    # Configuration des options d'analyse
     analysis_options = config_manager.render_analysis_options()
     
     # Initialisation des clients

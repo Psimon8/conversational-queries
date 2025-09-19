@@ -36,7 +36,11 @@ class DataForSEOService:
         # Combiner tous les mots-clés uniques
         all_keywords = list(set(keywords + suggestions))
         
-        st.info(f"📊 Récupération des volumes pour {len(all_keywords)} mots-clés")
+        if not all_keywords:
+            st.warning("⚠️ Aucun mot-clé à traiter")
+            return {'volume_data': [], 'keywords_with_volume': []}
+        
+        st.info(f"📊 Récupération des volumes pour {len(all_keywords)} mots-clés uniques")
         
         # Récupérer les volumes de recherche
         volume_data = self.client.get_search_volume_batch(
@@ -50,12 +54,21 @@ class DataForSEOService:
             st.warning("⚠️ Aucun volume de recherche récupéré")
             return {'volume_data': [], 'keywords_with_volume': []}
         
-        # Filtrer par volume minimum
+        # Filtrer par volume minimum avec gestion des valeurs None
         min_volume = self.config.get('min_volume', 0)
-        keywords_with_volume = [
-            item for item in volume_data
-            if (item.get('search_volume') or 0) >= min_volume
-        ]
+        keywords_with_volume = []
+        
+        for item in volume_data:
+            search_volume = item.get('search_volume')
+            # Gestion sécurisée des valeurs None
+            if search_volume is None:
+                search_volume = 0
+            
+            if search_volume >= min_volume:
+                keywords_with_volume.append(item)
+        
+        # Trier par volume décroissant pour optimiser les futures opérations
+        keywords_with_volume.sort(key=lambda x: x.get('search_volume', 0) or 0, reverse=True)
         
         st.success(f"✅ {len(volume_data)} volumes récupérés, {len(keywords_with_volume)} avec volume ≥ {min_volume}")
         
@@ -66,14 +79,21 @@ class DataForSEOService:
         }
     
     def get_ads_suggestions(self, keywords_with_volume: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Récupérer les suggestions Google Ads"""
+        """Récupérer les suggestions Google Ads pour les 20 mots-clés avec le plus fort volume"""
         if not keywords_with_volume:
             return []
         
-        # Limiter le nombre de mots-clés pour éviter les coûts
-        keywords_for_ads = [item['keyword'] for item in keywords_with_volume[:100]]
+        # Trier par volume décroissant et sélectionner les 20 premiers
+        sorted_keywords = sorted(
+            keywords_with_volume, 
+            key=lambda x: x.get('search_volume', 0) or 0, 
+            reverse=True
+        )
+        top_20_keywords = sorted_keywords[:20]
         
-        st.info(f"💰 Récupération des suggestions Ads pour {len(keywords_for_ads)} mots-clés")
+        keywords_for_ads = [item['keyword'] for item in top_20_keywords]
+        
+        st.info(f"💰 Récupération des suggestions Ads pour les 20 mots-clés les plus populaires (volume max: {top_20_keywords[0].get('search_volume', 0) if top_20_keywords else 0})")
         
         ads_suggestions = self.client.get_keywords_for_keywords_batch(
             keywords_for_ads,
@@ -83,24 +103,28 @@ class DataForSEOService:
         )
         
         if ads_suggestions:
-            st.success(f"✅ {len(ads_suggestions)} suggestions Ads récupérées")
+            st.success(f"✅ {len(ads_suggestions)} suggestions Ads récupérées depuis les 20 mots-clés les plus populaires")
         
         return ads_suggestions
     
     def process_complete_analysis(self, keywords: List[str], 
                                 suggestions: List[str]) -> Dict[str, Any]:
-        """Processus complet d'enrichissement DataForSEO"""
+        """Processus complet d'enrichissement DataForSEO selon la logique demandée"""
         if not self.is_configured():
             return {}
         
         try:
-            # Étape 1: Volumes de recherche
+            # Étape 1: Récupération des volumes pour tous les mots-clés et suggestions
+            st.info("📊 Étape 1: Récupération des volumes de recherche pour tous les mots-clés et suggestions")
             volume_results = self.enrich_keywords_with_volumes(keywords, suggestions)
             
-            # Étape 2: Suggestions Ads
-            ads_suggestions = []
-            if volume_results.get('keywords_with_volume'):
-                ads_suggestions = self.get_ads_suggestions(volume_results['keywords_with_volume'])
+            if not volume_results.get('keywords_with_volume'):
+                st.warning("⚠️ Aucun mot-clé avec volume de recherche trouvé")
+                return volume_results
+            
+            # Étape 2: Utilisation de l'API Keywords for Keywords pour les 20 mots-clés les plus populaires
+            st.info("🔍 Étape 2: Utilisation de l'API Keywords for Keywords pour les 20 mots-clés les plus populaires")
+            ads_suggestions = self.get_ads_suggestions(volume_results['keywords_with_volume'])
             
             # Étape 3: Création de la liste enrichie finale
             enriched_keywords = self._create_enriched_keywords_list(
@@ -110,15 +134,19 @@ class DataForSEOService:
             # Étape 4: Déduplication des mots-clés
             deduplicated_keywords = deduplicate_keywords_with_origins(enriched_keywords)
             
-            return {
+            result = {
                 'volume_data': volume_results.get('volume_data', []),
                 'ads_suggestions': ads_suggestions,
                 'enriched_keywords': deduplicated_keywords,
                 'keywords_with_volume': volume_results.get('keywords_with_volume', []),
-                'total_keywords': len(deduplicated_keywords)
+                'total_keywords': len(deduplicated_keywords),
+                'top_20_keywords_count': len(volume_results.get('keywords_with_volume', [])[:20])
             }
             
-        except Exception as e:
+            st.success(f"✅ Analyse DataForSEO terminée: {len(deduplicated_keywords)} mots-clés enrichis, {len(ads_suggestions)} suggestions Ads")
+            return result
+            
+        except (ConnectionError, ValueError, KeyError, RuntimeError) as e:
             st.error(f"❌ Erreur DataForSEO: {str(e)}")
             return {}
     

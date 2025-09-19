@@ -3,38 +3,66 @@ from typing import Dict, Any, Tuple
 from dataforseo_client import DataForSEOClient
 
 class ConfigManager:
-    """Gestionnaire centralisé de la configuration"""
+    """Gestionnaire centralisé de la configuration avec interface améliorée"""
     
     def __init__(self):
         self.config = {}
         self.dataforseo_client = DataForSEOClient()
     
-    def render_openai_config(self) -> str:
-        """Configuration OpenAI dans la sidebar"""
-        st.sidebar.header("🤖 Configuration OpenAI")
+    def render_credentials_section(self) -> Tuple[str, bool, Dict[str, Any]]:
+        """Section centralisée pour tous les credentials et clés API"""
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("## 🔐 Configuration API")
         
-        api_key = st.sidebar.text_input(
-            "Clé API OpenAI", 
-            type="password", 
-            help="Votre clé API OpenAI pour GPT-4o mini",
-            placeholder="sk-..."
-        )
+        # OpenAI Configuration
+        with st.sidebar.expander("🤖 OpenAI", expanded=True):
+            api_key = self._render_openai_config()
+        
+        # DataForSEO Configuration
+        with st.sidebar.expander("📊 DataForSEO", expanded=False):
+            enable_dataforseo, dataforseo_config = self._render_dataforseo_config()
+        
+        return api_key, enable_dataforseo, dataforseo_config
+    
+    def _render_openai_config(self) -> str:
+        """Configuration OpenAI avec validation améliorée"""
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            api_key = st.text_input(
+                "Clé API OpenAI", 
+                type="password", 
+                help="Votre clé API OpenAI pour GPT-4o mini",
+                placeholder="sk-...",
+                key="openai_api_key"
+            )
+        
+        with col2:
+            if api_key:
+                if api_key.startswith("sk-") and len(api_key) > 20:
+                    st.success("✅")
+                else:
+                    st.error("❌")
+            else:
+                st.warning("⚠️")
         
         if api_key:
-            st.sidebar.success("✅ API OpenAI configurée")
+            if api_key.startswith("sk-") and len(api_key) > 20:
+                st.success("✅ Clé API OpenAI valide")
+            else:
+                st.error("❌ Format de clé API OpenAI invalide")
         else:
-            st.sidebar.warning("⚠️ Clé API OpenAI requise pour la génération de questions")
+            st.warning("⚠️ Clé API OpenAI requise pour la génération de questions")
         
         return api_key
     
-    def render_dataforseo_config(self) -> Tuple[bool, Dict[str, Any]]:
-        """Configuration DataForSEO dans la sidebar"""
-        st.sidebar.header("📊 DataForSEO (Enrichissement)")
-        
-        enable_dataforseo = st.sidebar.checkbox(
+    def _render_dataforseo_config(self) -> Tuple[bool, Dict[str, Any]]:
+        """Configuration DataForSEO améliorée"""
+        enable_dataforseo = st.checkbox(
             "Activer DataForSEO",
             value=False,
-            help="Enrichir l'analyse avec volumes de recherche et suggestions Ads"
+            help="Enrichir l'analyse avec volumes de recherche et suggestions Ads",
+            key="enable_dataforseo"
         )
         
         dataforseo_config = {
@@ -47,75 +75,119 @@ class ConfigManager:
         }
         
         if enable_dataforseo:
-            st.sidebar.info("💡 DataForSEO ajoutera volumes de recherche et suggestions Ads à vos mots-clés")
+            st.info("💡 DataForSEO ajoutera volumes de recherche et suggestions Ads à vos mots-clés")
             
-            with st.sidebar.expander("🔧 Paramètres DataForSEO", expanded=True):
+            # Credentials avec validation
+            col1, col2, col3 = st.columns([2, 2, 1])
+            
+            with col1:
                 dataforseo_config['login'] = st.text_input(
                     "Login DataForSEO", 
-                    placeholder="votre_login"
+                    placeholder="votre_login",
+                    key="dataforseo_login"
                 )
+            
+            with col2:
                 dataforseo_config['password'] = st.text_input(
                     "Mot de passe DataForSEO", 
                     type="password",
-                    placeholder="votre_password"
+                    placeholder="votre_password",
+                    key="dataforseo_password"
                 )
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    dataforseo_config['language'] = st.selectbox(
-                        "Langue",
-                        options=['fr', 'en', 'es', 'de', 'it'],
-                        index=0,
-                        help="Langue pour les données DataForSEO"
-                    )
-                
-                with col2:
-                    dataforseo_config['location'] = st.selectbox(
-                        "Pays cible",
-                        options=['fr', 'en-us', 'en-gb', 'es', 'de', 'it', 'ca', 'au'],
-                        index=0,
-                        help="Géolocalisation des volumes"
-                    )
-                
-                dataforseo_config['min_volume'] = st.slider(
-                    "Volume minimum",
-                    min_value=0,
-                    max_value=1000,
-                    value=10,
-                    help="Volume mensuel minimum pour conserver un mot-clé"
-                )
-                
-                st.info(f"🎯 Seuls les mots-clés avec ≥ {dataforseo_config['min_volume']} recherches/mois seront conservés")
             
-            # Validation des credentials
-            if dataforseo_config['login'] and dataforseo_config['password']:
-                self.dataforseo_client.set_credentials(
-                    dataforseo_config['login'], 
-                    dataforseo_config['password']
+            with col3:
+                credentials_valid = bool(dataforseo_config['login'] and dataforseo_config['password'])
+                if credentials_valid:
+                    if st.button("🔍 Tester", key="test_credentials"):
+                        self.dataforseo_client.set_credentials(
+                            dataforseo_config['login'], 
+                            dataforseo_config['password']
+                        )
+                        is_valid, message = self.dataforseo_client.test_credentials()
+                        if is_valid:
+                            st.success("✅ Valide")
+                        else:
+                            st.error("❌ Invalide")
+                else:
+                    st.button("🔍 Tester", disabled=True, key="test_credentials_disabled")
+            
+            # Paramètres régionaux cohérents
+            st.markdown("**📍 Paramètres régionaux**")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                language_options = {
+                    'fr': '🇫🇷 Français',
+                    'en': '🇺🇸 Anglais', 
+                    'es': '🇪🇸 Espagnol',
+                    'de': '🇩🇪 Allemand',
+                    'it': '🇮🇹 Italien'
+                }
+                selected_lang = st.selectbox(
+                    "Langue",
+                    options=list(language_options.keys()),
+                    format_func=lambda x: language_options[x],
+                    index=0,
+                    help="Langue pour les données DataForSEO",
+                    key="dataforseo_language"
                 )
-                
-                if st.sidebar.button("🔍 Tester credentials"):
-                    is_valid, message = self.dataforseo_client.test_credentials()
-                    if is_valid:
-                        st.sidebar.success(message)
-                    else:
-                        st.sidebar.error(message)
-                
-                st.sidebar.success("✅ DataForSEO configuré")
-                st.sidebar.caption("📈 Volumes + 💰 Suggestions Ads seront ajoutés")
+                dataforseo_config['language'] = selected_lang
+            
+            with col2:
+                location_options = {
+                    'fr': '🇫🇷 France',
+                    'en-us': '🇺🇸 États-Unis',
+                    'en-gb': '🇬🇧 Royaume-Uni', 
+                    'es': '🇪🇸 Espagne',
+                    'de': '🇩🇪 Allemagne',
+                    'it': '🇮🇹 Italie',
+                    'ca': '🇨🇦 Canada',
+                    'au': '🇦🇺 Australie'
+                }
+                selected_loc = st.selectbox(
+                    "Pays cible",
+                    options=list(location_options.keys()),
+                    format_func=lambda x: location_options[x],
+                    index=0,
+                    help="Géolocalisation des volumes",
+                    key="dataforseo_location"
+                )
+                dataforseo_config['location'] = selected_loc
+            
+            # Volume minimum avec slider amélioré
+            st.markdown("**� Filtrage par volume**")
+            dataforseo_config['min_volume'] = st.slider(
+                "Volume minimum (recherches/mois)",
+                min_value=0,
+                max_value=1000,
+                value=10,
+                step=10,
+                help="Seuls les mots-clés avec ce volume minimum seront conservés",
+                key="dataforseo_min_volume"
+            )
+            
+            st.info(f"🎯 Seuls les mots-clés avec ≥ {dataforseo_config['min_volume']} recherches/mois seront conservés")
+            
+            # Validation finale
+            if dataforseo_config['login'] and dataforseo_config['password']:
+                st.success("✅ DataForSEO configuré")
+                st.caption("📈 Volumes + 💰 Suggestions Ads seront ajoutés")
             else:
-                st.sidebar.warning("⚠️ Login/Password requis")
+                st.warning("⚠️ Login/Password requis")
         
         return enable_dataforseo, dataforseo_config
     
     def render_analysis_options(self) -> Dict[str, Any]:
-        """Options d'analyse dans la sidebar"""
-        st.sidebar.header("🎯 Options d'analyse")
+        """Options d'analyse avec sélecteurs cohérents"""
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("## 🎯 Options d'analyse")
         
+        # Génération de questions
         generate_questions = st.sidebar.checkbox(
-            "Générer questions conversationnelles",
+            "✨ Générer questions conversationnelles",
             value=True,
-            help="Analyse thématique + génération de questions"
+            help="Analyse thématique + génération de questions basées sur les volumes",
+            key="generate_questions"
         )
         
         options = {
@@ -125,62 +197,132 @@ class ConfigManager:
         }
         
         if generate_questions:
+            st.sidebar.markdown("**📝 Paramètres de génération**")
             options['final_questions_count'] = st.sidebar.slider(
                 "Nombre de questions finales",
                 min_value=5,
                 max_value=100,
                 value=20,
-                help="Questions à conserver après consolidation"
+                step=5,
+                help="Nombre de questions à conserver après consolidation",
+                key="final_questions_count"
             )
         
-        options['language'] = st.sidebar.selectbox(
-            "Langue d'analyse", 
-            ["fr", "en", "es", "de", "it"], 
+        # Langue d'analyse avec format cohérent
+        st.sidebar.markdown("**🌍 Langue d'analyse**")
+        language_options = {
+            'fr': '🇫🇷 Français',
+            'en': '🇺🇸 Anglais', 
+            'es': '🇪🇸 Espagnol',
+            'de': '🇩🇪 Allemand',
+            'it': '🇮🇹 Italien'
+        }
+        selected_lang = st.sidebar.selectbox(
+            "Langue des suggestions et questions",
+            options=list(language_options.keys()),
+            format_func=lambda x: language_options[x],
             index=0,
-            help="Langue pour suggestions Google et questions"
+            help="Langue pour les suggestions Google et la génération de questions",
+            key="analysis_language"
         )
+        options['language'] = selected_lang
         
         return options
     
     def render_suggestion_levels(self) -> Dict[str, int]:
-        """Configuration des niveaux de suggestions"""
-        st.markdown("#### 📊 Configuration multi-niveaux")
+        """Configuration des niveaux de suggestions avec interface améliorée"""
+        st.markdown("### 📊 Configuration multi-niveaux")
+        st.info("🔍 Définissez la profondeur d'analyse des suggestions Google")
         
+        # Niveau 1 - toujours actif
         col1, col2, col3 = st.columns(3)
         
         with col1:
+            st.markdown("**🎯 Niveau 1 - Suggestions directes**")
             level1_count = st.slider(
-                "Niveau 1 (direct)", 
-                min_value=2, 
-                max_value=15, 
+                "Nombre de suggestions",
+                min_value=5, 
+                max_value=20, 
                 value=10,
-                help="Suggestions directes du mot-clé"
+                step=1,
+                help="Nombre de suggestions directes à récupérer pour chaque mot-clé",
+                key="level1_count"
             )
+            st.caption(f"📈 {level1_count} suggestions par mot-clé")
         
         with col2:
-            level2_count = st.slider(
-                "Niveau 2 (suggestions²)", 
-                min_value=0,
-                max_value=15, 
-                value=0,
-                help="Suggestions des suggestions (0 = désactivé)"
+            st.markdown("**🔄 Niveau 2 - Suggestions²**")
+            enable_level2 = st.checkbox(
+                "Activer niveau 2",
+                value=False,
+                help="Analyser les suggestions des suggestions de niveau 1",
+                key="enable_level2"
             )
+            
+            if enable_level2:
+                level2_count = st.slider(
+                    "Suggestions niveau 2",
+                    min_value=3,
+                    max_value=15, 
+                    value=5,
+                    step=1,
+                    help="Nombre de suggestions à récupérer pour chaque suggestion de niveau 1",
+                    key="level2_count"
+                )
+                st.caption(f"📈 {level2_count} suggestions par suggestion N1")
+            else:
+                level2_count = 0
+                st.caption("🚫 Désactivé")
         
         with col3:
-            level3_count = st.slider(
-                "Niveau 3 (suggestions³)", 
-                min_value=0,
-                max_value=15, 
-                value=0,
-                help="Niveau 3 des suggestions (0 = désactivé)"
+            st.markdown("**🔁 Niveau 3 - Suggestions³**")
+            enable_level3 = st.checkbox(
+                "Activer niveau 3",
+                value=False,
+                help="Analyser les suggestions des suggestions de niveau 2 (nécessite niveau 2)",
+                key="enable_level3",
+                disabled=not enable_level2
             )
+            
+            if enable_level3 and enable_level2:
+                level3_count = st.slider(
+                    "Suggestions niveau 3",
+                    min_value=2,
+                    max_value=10, 
+                    value=3,
+                    step=1,
+                    help="Nombre de suggestions à récupérer pour chaque suggestion de niveau 2",
+                    key="level3_count"
+                )
+                st.caption(f"📈 {level3_count} suggestions par suggestion N2")
+            else:
+                level3_count = 0
+                if not enable_level2:
+                    st.caption("⚠️ Nécessite niveau 2")
+                else:
+                    st.caption("🚫 Désactivé")
+        
+        # Résumé visuel
+        total_estimated = level1_count
+        if enable_level2:
+            total_estimated += level1_count * level2_count
+        if enable_level3 and enable_level2:
+            total_estimated += level1_count * level2_count * level3_count
+        
+        st.markdown("---")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("**Suggestions estimées par mot-clé**", total_estimated)
+        with col2:
+            active_levels = 1 + (1 if enable_level2 else 0) + (1 if enable_level3 and enable_level2 else 0)
+            st.metric("**Niveaux actifs**", active_levels)
         
         return {
             'level1_count': level1_count,
             'level2_count': level2_count,
             'level3_count': level3_count,
-            'enable_level2': level2_count > 0,
-            'enable_level3': level3_count > 0 and level2_count > 0
+            'enable_level2': enable_level2,
+            'enable_level3': enable_level3 and enable_level2
         }
     
     def render_cost_estimation(self, keywords_count: int, levels: Dict[str, int]):

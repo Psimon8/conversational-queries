@@ -3,8 +3,7 @@ import base64
 import json
 import time
 import streamlit as st
-from typing import List, Dict, Any, Optional, Tuple
-import pandas as pd
+from typing import List, Dict, Any, Tuple
 
 class DataForSEOClient:
     """Client pour interagir avec l'API DataForSEO"""
@@ -78,6 +77,11 @@ class DataForSEOClient:
         if not keywords:
             return []
         
+        # Validation des paramètres
+        if not self.login or not self.password:
+            st.error("❌ Credentials DataForSEO manquants")
+            return []
+        
         # Limiter à la taille de batch maximale
         keywords = keywords[:max_batch_size]
         
@@ -116,7 +120,7 @@ class DataForSEOClient:
                     for task in data.get('tasks', []):
                         if task['status_code'] == 20000:
                             for item in task.get('result', []):
-                                # Gérer les valeurs None pour éviter les erreurs de comparaison
+                                # Gestion sécurisée des valeurs None
                                 search_volume = item.get('search_volume')
                                 if search_volume is None:
                                     search_volume = 0
@@ -141,17 +145,28 @@ class DataForSEOClient:
                     st.error(f"Erreur DataForSEO: {data.get('status_message', 'Unknown error')}")
                     return []
             else:
-                st.error(f"Erreur HTTP {response.status_code}")
+                st.error(f"Erreur HTTP {response.status_code}: {response.text}")
                 return []
                 
+        except requests.exceptions.Timeout:
+            st.error("❌ Timeout lors de la récupération des volumes")
+            return []
+        except requests.exceptions.ConnectionError:
+            st.error("❌ Erreur de connexion DataForSEO")
+            return []
         except Exception as e:
-            st.error(f"Erreur lors de la récupération des volumes: {str(e)}")
+            st.error(f"❌ Erreur inattendue: {str(e)}")
             return []
     
     def get_keywords_for_keywords_batch(self, keywords: List[str], language: str = 'fr',
                                        location: str = 'fr', max_batch_size: int = 20) -> List[Dict[str, Any]]:
         """Récupérer les suggestions Ads par batch de mots-clés (max 20 par requête)"""
         if not keywords:
+            return []
+        
+        # Validation des credentials
+        if not self.login or not self.password:
+            st.error("❌ Credentials DataForSEO manquants")
             return []
         
         all_suggestions = []
@@ -198,7 +213,7 @@ class DataForSEOClient:
                         for task in data.get('tasks', []):
                             if task['status_code'] == 20000:
                                 for item in task.get('result', []):
-                                    # Gérer les valeurs None pour éviter les erreurs de comparaison
+                                    # Gestion sécurisée des valeurs None
                                     search_volume = item.get('search_volume')
                                     if search_volume is None:
                                         search_volume = 0
@@ -223,13 +238,19 @@ class DataForSEOClient:
                     else:
                         st.warning(f"Erreur DataForSEO batch {i//max_batch_size + 1}: {data.get('status_message', 'Unknown error')}")
                 else:
-                    st.warning(f"Erreur HTTP {response.status_code} pour batch {i//max_batch_size + 1}")
+                    st.warning(f"Erreur HTTP {response.status_code} pour batch {i//max_batch_size + 1}: {response.text}")
                 
                 # Délai entre les requêtes pour éviter le rate limiting
                 time.sleep(1)
                 
+            except requests.exceptions.Timeout:
+                st.warning(f"❌ Timeout pour batch {i//max_batch_size + 1}")
+                continue
+            except requests.exceptions.ConnectionError:
+                st.warning(f"❌ Erreur de connexion pour batch {i//max_batch_size + 1}")
+                continue
             except Exception as e:
-                st.warning(f"Erreur batch {i//max_batch_size + 1}: {str(e)}")
+                st.warning(f"❌ Erreur inattendue batch {i//max_batch_size + 1}: {str(e)}")
                 continue
         
         return all_suggestions

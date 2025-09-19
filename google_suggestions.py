@@ -11,8 +11,11 @@ class GoogleSuggestionsClient:
     
     def get_suggestions(self, keyword: str, lang: str = 'fr', max_suggestions: int = 10) -> List[str]:
         """Récupère les suggestions Google pour un mot-clé"""
+        if not keyword or not keyword.strip():
+            return []
+        
         params = {
-            "q": keyword,
+            "q": keyword.strip(),
             "gl": lang,
             "client": "chrome",
             "_": str(int(time.time() * 1000))
@@ -22,9 +25,18 @@ class GoogleSuggestionsClient:
             response = requests.get(self.base_url, params=params, timeout=5)
             response.raise_for_status()
             suggestions = response.json()[1][:max_suggestions]
-            return suggestions
+            return [s for s in suggestions if s and s.strip()]  # Filtrer les suggestions vides
+        except requests.exceptions.Timeout:
+            st.warning(f"⏰ Timeout pour '{keyword}'")
+            return []
+        except requests.exceptions.ConnectionError:
+            st.warning(f"🌐 Erreur de connexion pour '{keyword}'")
+            return []
+        except (ValueError, IndexError) as e:
+            st.warning(f"📄 Erreur de parsing pour '{keyword}': {str(e)}")
+            return []
         except Exception as e:
-            st.warning(f"Erreur suggestions pour '{keyword}': {str(e)}")
+            st.warning(f"❌ Erreur inattendue pour '{keyword}': {str(e)}")
             return []
     
     def get_multilevel_suggestions(self, keyword: str, lang: str = 'fr', 
