@@ -45,14 +45,71 @@ class ResultsManager:
     def _filter_suggestions_by_tags(self, suggestions_df: pd.DataFrame, selected_tags: List[str]) -> pd.DataFrame:
         """Filtrer les suggestions basées sur les tags sélectionnés"""
         if not selected_tags:
-            return suggestions_df
+            # Si aucun tag sélectionné, ne montrer que le niveau 0
+            return suggestions_df[suggestions_df['Niveau'] == 0]
         
         # Créer un pattern regex pour chercher les tags sélectionnés
         pattern = '|'.join([rf'\b{re.escape(tag)}\b' for tag in selected_tags])
         
         # Filtrer les suggestions qui contiennent au moins un des tags sélectionnés
         mask = suggestions_df['Suggestion Google'].str.contains(pattern, case=False, regex=True, na=False)
-        return suggestions_df[mask]
+        
+        # Inclure toujours le niveau 0 (mots-clés de base)
+        level_0_mask = suggestions_df['Niveau'] == 0
+        final_mask = mask | level_0_mask
+        
+        return suggestions_df[final_mask]
+    
+    def _render_clickable_tags(self, top_tags: List[tuple]) -> List[str]:
+        """Afficher les tags cliquables et retourner la liste des tags sélectionnés"""
+        st.markdown("**🏷️ Tags les plus fréquents (cliquez pour filtrer)**")
+        
+        # Initialiser les tags sélectionnés dans le session state si nécessaire
+        if 'selected_tags' not in st.session_state:
+            st.session_state.selected_tags = [tag for tag, count in top_tags]  # Tous sélectionnés par défaut
+        
+        # Créer des colonnes pour afficher les tags
+        num_cols = 5
+        cols = st.columns(num_cols)
+        
+        # Boutons pour sélectionner/désélectionner tous
+        control_col1, control_col2, control_col3 = st.columns([1, 1, 3])
+        
+        with control_col1:
+            if st.button("✅ Tout sélectionner", key="select_all_tags"):
+                st.session_state.selected_tags = [tag for tag, count in top_tags]
+                st.rerun()
+        
+        with control_col2:
+            if st.button("❌ Tout désélectionner", key="deselect_all_tags"):
+                st.session_state.selected_tags = []
+                st.rerun()
+        
+        # Afficher les tags sous forme de boutons cliquables
+        for i, (tag, count) in enumerate(top_tags):
+            col_idx = i % num_cols
+            with cols[col_idx]:
+                is_selected = tag in st.session_state.selected_tags
+                
+                # Style du bouton selon l'état
+                if is_selected:
+                    button_type = "primary"
+                    label = f"✓ {tag} ({count})"
+                else:
+                    button_type = "secondary"
+                    label = f"○ {tag} ({count})"
+                
+                # Bouton cliquable
+                if st.button(label, key=f"tag_{tag}_{i}", type=button_type):
+                    if is_selected:
+                        # Désélectionner le tag
+                        st.session_state.selected_tags.remove(tag)
+                    else:
+                        # Sélectionner le tag
+                        st.session_state.selected_tags.append(tag)
+                    st.rerun()
+        
+        return st.session_state.selected_tags
 
     def render_analysis_summary(self):
         """Afficher le résumé de l'analyse"""
@@ -125,40 +182,20 @@ class ResultsManager:
             top_tags = self._get_top_tags(suggestion_texts, 20)
             
             if top_tags:
-                st.markdown("**🏷️ Tags les plus fréquents (filtrage disponible)**")
-                
-                # Créer la liste des tags avec leurs occurrences pour l'affichage
-                tag_options = [f"{tag} ({count})" for tag, count in top_tags]
-                tag_values = [tag for tag, count in top_tags]
-                
-                # Widget multiselect pour choisir les tags à inclure
-                selected_tag_display = st.multiselect(
-                    "Sélectionner les tags à inclure dans l'affichage et l'export :",
-                    options=tag_options,
-                    default=tag_options,  # Tous sélectionnés par défaut
-                    help="Décochez un tag pour exclure toutes les suggestions contenant ce mot",
-                    key="tag_filter"
-                )
-                
-                # Extraire les tags réels (sans les comptes)
-                selected_tags = []
-                for display_tag in selected_tag_display:
-                    # Extraire le tag avant la parenthèse
-                    tag = display_tag.split(' (')[0]
-                    selected_tags.append(tag)
+                # Afficher les tags cliquables et obtenir les tags sélectionnés
+                selected_tags = self._render_clickable_tags(top_tags)
                 
                 # Filtrer les suggestions basées sur les tags sélectionnés
-                if selected_tags:
-                    filtered_df = self._filter_suggestions_by_tags(suggestions_df, selected_tags)
-                    
-                    # Afficher le nombre de suggestions filtrées
-                    if len(filtered_df) != len(suggestions_df):
-                        excluded_count = len(suggestions_df) - len(filtered_df)
-                        st.info(f"📊 {len(filtered_df)} suggestions affichées ({excluded_count} filtrées)")
-                else:
-                    # Aucun tag sélectionné = afficher seulement le niveau 0 (mots-clés de base)
-                    filtered_df = suggestions_df[suggestions_df['Niveau'] == 0]
-                    st.info(f"⚠️ Aucun tag sélectionné - Affichage des mots-clés de base uniquement")
+                filtered_df = self._filter_suggestions_by_tags(suggestions_df, selected_tags)
+                
+                # Afficher le nombre de suggestions filtrées
+                if len(selected_tags) == 0:
+                    st.warning("⚠️ Aucun tag sélectionné - Affichage des mots-clés de base uniquement")
+                elif len(filtered_df) != len(suggestions_df):
+                    excluded_count = len(suggestions_df) - len(filtered_df)
+                    st.info(f"📊 {len(filtered_df)} suggestions affichées ({excluded_count} filtrées)")
+            else:
+                filtered_df = suggestions_df
         else:
             filtered_df = suggestions_df
         
@@ -169,16 +206,17 @@ class ResultsManager:
         total_suggestions = len(filtered_df)
         
         # Créer les colonnes pour toutes les métriques sur la même ligne
-        cols = st.columns(len(level_stats) + 1)
-        
-        # Afficher les statistiques par niveau
-        for i, (level, count) in enumerate(level_stats.items()):
-            with cols[i]:
-                st.metric(f"Niveau {level}", count)
-        
-        # Afficher le total
-        with cols[-1]:
-            st.metric("**Total**", total_suggestions)
+        if len(level_stats) > 0:
+            cols = st.columns(len(level_stats) + 1)
+            
+            # Afficher les statistiques par niveau
+            for i, (level, count) in enumerate(level_stats.items()):
+                with cols[i]:
+                    st.metric(f"Niveau {level}", count)
+            
+            # Afficher le total
+            with cols[-1]:
+                st.metric("**Total**", total_suggestions)
         
         # Boutons d'export sur la même ligne
         col1, col2 = st.columns([1, 1])
@@ -215,7 +253,7 @@ class ResultsManager:
         else:
             display_df = filtered_df
         
-        st.dataframe(display_df)
+        st.dataframe(display_df, use_container_width=True)
     
     def render_keywords_with_volume(self):
         """Afficher les mots-clés avec volume de recherche"""
