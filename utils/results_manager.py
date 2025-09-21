@@ -42,21 +42,25 @@ class ResultsManager:
         
         return word_counts.most_common(top_n)
     
-    def _filter_suggestions_by_tags(self, suggestions_df: pd.DataFrame, selected_tags: List[str]) -> pd.DataFrame:
+    def _filter_suggestions_by_tags(self, suggestions_df: pd.DataFrame, selected_tags: List[str], all_tags: List[str]) -> pd.DataFrame:
         """Filtrer les suggestions basées sur les tags sélectionnés"""
-        if not selected_tags:
-            # Si aucun tag sélectionné, ne montrer que le niveau 0
-            return suggestions_df[suggestions_df['Niveau'] == 0]
+        # Trouver les tags qui ont été désélectionnés
+        deselected_tags = [tag for tag in all_tags if tag not in selected_tags]
         
-        # Créer un pattern regex pour chercher les tags sélectionnés
-        pattern = '|'.join([rf'\b{re.escape(tag)}\b' for tag in selected_tags])
+        if not deselected_tags:
+            # Si tous les tags sont sélectionnés, montrer toutes les suggestions
+            return suggestions_df
         
-        # Filtrer les suggestions qui contiennent au moins un des tags sélectionnés
-        mask = suggestions_df['Suggestion Google'].str.contains(pattern, case=False, regex=True, na=False)
+        # Créer un pattern regex pour les tags désélectionnés
+        exclude_pattern = '|'.join([rf'\b{re.escape(tag)}\b' for tag in deselected_tags])
         
-        # Inclure toujours le niveau 0 (mots-clés de base)
+        # Exclure les suggestions qui contiennent un des tags désélectionnés
+        exclude_mask = suggestions_df['Suggestion Google'].str.contains(exclude_pattern, case=False, regex=True, na=False)
+        
+        # Garder les suggestions qui ne contiennent aucun tag désélectionné
+        # Toujours inclure le niveau 0 (mots-clés de base)
         level_0_mask = suggestions_df['Niveau'] == 0
-        final_mask = mask | level_0_mask
+        final_mask = ~exclude_mask | level_0_mask
         
         return suggestions_df[final_mask]
     
@@ -182,18 +186,36 @@ class ResultsManager:
             top_tags = self._get_top_tags(suggestion_texts, 20)
             
             if top_tags:
-                # Afficher les tags cliquables et obtenir les tags sélectionnés
-                selected_tags = self._render_clickable_tags(top_tags)
+                st.markdown("**🏷️ Tags les plus fréquents (filtrage disponible)**")
+                
+                # Créer la liste des tags avec leurs occurrences pour l'affichage
+                tag_options = [f"{tag} ({count})" for tag, count in top_tags]
+                all_tags = [tag for tag, count in top_tags]
+                
+                # Widget multiselect pour choisir les tags à inclure
+                selected_tag_display = st.multiselect(
+                    "Décochez un tag pour exclure toutes les suggestions contenant ce mot :",
+                    options=tag_options,
+                    default=tag_options,  # Tous sélectionnés par défaut
+                    help="Les suggestions contenant les tags décochés seront exclues du tableau et de l'export",
+                    key="tag_filter"
+                )
+                
+                # Extraire les tags réels (sans les comptes)
+                selected_tags = []
+                for display_tag in selected_tag_display:
+                    # Extraire le tag avant la parenthèse
+                    tag = display_tag.split(' (')[0]
+                    selected_tags.append(tag)
                 
                 # Filtrer les suggestions basées sur les tags sélectionnés
-                filtered_df = self._filter_suggestions_by_tags(suggestions_df, selected_tags)
+                filtered_df = self._filter_suggestions_by_tags(suggestions_df, selected_tags, all_tags)
                 
                 # Afficher le nombre de suggestions filtrées
-                if len(selected_tags) == 0:
-                    st.warning("⚠️ Aucun tag sélectionné - Affichage des mots-clés de base uniquement")
-                elif len(filtered_df) != len(suggestions_df):
+                if len(selected_tags) != len(all_tags):
                     excluded_count = len(suggestions_df) - len(filtered_df)
-                    st.info(f"📊 {len(filtered_df)} suggestions affichées ({excluded_count} filtrées)")
+                    deselected_tags = [tag for tag in all_tags if tag not in selected_tags]
+                    st.info(f"📊 {len(filtered_df)} suggestions affichées ({excluded_count} filtrées par exclusion des tags : {', '.join(deselected_tags)})")
             else:
                 filtered_df = suggestions_df
         else:
