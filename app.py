@@ -88,8 +88,6 @@ def render_analysis_tab(config_manager, google_client, question_generator,
                        dataforseo_service, api_key, analysis_options):
     """Onglet d'analyse principal"""
     
-    st.markdown("### 🔍 Analyse basée sur les suggestions Google")
-    
     # Input des mots-clés
     keywords_input = st.text_area(
         "🎯 Entrez vos mots-clés (un par ligne)",
