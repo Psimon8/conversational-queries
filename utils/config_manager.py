@@ -156,7 +156,7 @@ class ConfigManager:
                 dataforseo_config['location'] = selected_loc
             
             # Volume minimum avec slider amélioré
-            st.markdown("**� Filtrage par volume**")
+            st.markdown("**📊 Filtrage par volume**")
             dataforseo_config['min_volume'] = st.slider(
                 "Volume minimum (recherches/mois)",
                 min_value=0,
@@ -237,7 +237,7 @@ class ConfigManager:
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            st.markdown("**🎯 Niveau 1 - Suggestions directes**")
+            st.markdown("**🎯 Niveau 1 - Suggestions**")
             level1_count = st.slider(
                 "Nombre de suggestions",
                 min_value=5, 
@@ -250,59 +250,45 @@ class ConfigManager:
         
         with col2:
             st.markdown("**🔄 Niveau 2 - Suggestions²**")
-            enable_level2 = st.checkbox(
-                "Activer niveau 2",
-                value=False,
-                help="Analyser les suggestions des suggestions de niveau 1",
-                key="enable_level2"
+            level2_count = st.slider(
+                "Suggestions niveau 2",
+                min_value=0,
+                max_value=15, 
+                value=5,
+                step=1,
+                help="Nombre de suggestions à récupérer pour chaque suggestion de niveau 1 (0 = désactivé)",
+                key="level2_count"
             )
-            
-            if enable_level2:
-                level2_count = st.slider(
-                    "Suggestions niveau 2",
-                    min_value=3,
-                    max_value=15, 
-                    value=5,
-                    step=1,
-                    help="Nombre de suggestions à récupérer pour chaque suggestion de niveau 1",
-                    key="level2_count"
-                )
+            if level2_count == 0:
+                st.caption("🚫 Désactivé")
             else:
-                level2_count = 0
+                st.caption(f"✅ {level2_count} suggestions par suggestion N1")
         
         with col3:
             st.markdown("**🔁 Niveau 3 - Suggestions³**")
-            enable_level3 = st.checkbox(
-                "Activer niveau 3",
-                value=False,
-                help="Analyser les suggestions des suggestions de niveau 2 (nécessite niveau 2)",
-                key="enable_level3",
-                disabled=not enable_level2
+            level3_count = st.slider(
+                "Suggestions niveau 3",
+                min_value=0,
+                max_value=10, 
+                value=0,
+                step=1,
+                help="Nombre de suggestions à récupérer pour chaque suggestion de niveau 2 (0 = désactivé, nécessite niveau 2)",
+                key="level3_count",
+                disabled=(level2_count == 0)
             )
-            
-            if enable_level3 and enable_level2:
-                level3_count = st.slider(
-                    "Suggestions niveau 3",
-                    min_value=2,
-                    max_value=10, 
-                    value=3,
-                    step=1,
-                    help="Nombre de suggestions à récupérer pour chaque suggestion de niveau 2",
-                    key="level3_count"
-                )
+            if level2_count == 0:
+                st.caption("⚠️ Nécessite niveau 2")
+            elif level3_count == 0:
+                st.caption("🚫 Désactivé")
             else:
-                level3_count = 0
-                if not enable_level2:
-                    st.caption("⚠️ Nécessite niveau 2")
-                else:
-                    st.caption("🚫 Désactivé")
+                st.caption(f"✅ {level3_count} suggestions par suggestion N2")
         
         return {
             'level1_count': level1_count,
             'level2_count': level2_count,
             'level3_count': level3_count,
-            'enable_level2': enable_level2,
-            'enable_level3': enable_level3 and enable_level2
+            'enable_level2': level2_count > 0,
+            'enable_level3': level3_count > 0 and level2_count > 0
         }
     
     def render_cost_estimation(self, keywords_count: int, levels: Dict[str, int]):
@@ -320,6 +306,20 @@ class ConfigManager:
                 with col1:
                     st.metric("Mots-clés estimés", f"{cost_estimate['keywords_count']:,}")
                 with col2:
+                    st.metric("Coût volumes", f"${cost_estimate['search_volume_cost']:.2f}")
+                with col3:
+                    st.metric("Coût total", f"${cost_estimate['total_cost']:.2f}")
+            
+            cost_estimate = self.dataforseo_client.estimate_cost(estimated_total, True)
+            
+            with st.expander("💰 Estimation coûts DataForSEO"):
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Mots-clés estimés", f"{cost_estimate['keywords_count']:,}")
+                with col2:
+                    st.metric("Coût volumes", f"${cost_estimate['search_volume_cost']:.2f}")
+                with col3:
+                    st.metric("Coût total", f"${cost_estimate['total_cost']:.2f}")
                     st.metric("Coût volumes", f"${cost_estimate['search_volume_cost']:.2f}")
                 with col3:
                     st.metric("Coût total", f"${cost_estimate['total_cost']:.2f}")
