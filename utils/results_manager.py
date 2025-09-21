@@ -76,10 +76,33 @@ class ResultsManager:
         # Statistiques par niveau
         level_stats = suggestions_df['Niveau'].value_counts().sort_index()
         
-        cols = st.columns(len(level_stats))
+        # Calculer le total
+        total_suggestions = len(suggestions_df)
+        
+        # Créer les colonnes pour les métriques (niveaux + total)
+        cols = st.columns(len(level_stats) + 1)
+        
+        # Afficher les statistiques par niveau
         for i, (level, count) in enumerate(level_stats.items()):
             with cols[i]:
                 st.metric(f"Niveau {level}", count)
+        
+        # Afficher le total
+        with cols[-1]:
+            st.metric("**Total**", total_suggestions)
+        
+        # Bouton d'export Excel
+        col_export, _ = st.columns([1, 4])
+        with col_export:
+            if st.button("📊 Exporter Excel", type="secondary"):
+                from utils.ui_components import create_excel_file
+                excel_data = create_excel_file(suggestions_df)
+                st.download_button(
+                    label="📥 Télécharger Excel",
+                    data=excel_data,
+                    file_name=f"suggestions_google_{self.metadata.get('timestamp', 'export').replace(':', '-').replace(' ', '_')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
         
         # Tableau des suggestions
         st.dataframe(suggestions_df, use_container_width=True)
