@@ -13,27 +13,9 @@ def setup_page_config():
     )
 
 def render_header():
-    """Affichage de l'en-tête principal avec design amélioré"""
-    st.markdown("""
-    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-                padding: 2rem; border-radius: 15px; margin-bottom: 2rem; color: white;">
-        <h1 style="color: white; margin: 0; font-size: 2.5rem;">
-            🔍 Optimiseur de Requêtes Conversationnelles SEO
-        </h1>
-        <p style="margin: 0.5rem 0 0 0; font-size: 1.2rem; opacity: 0.9;">
-            Analyse basée sur les suggestions Google pour l'optimisation SEO avancée
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Métriques rapides
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("**Statut**", "✅ Prêt", help="Application opérationnelle")
-    with col2:
-        st.metric("**Version**", "2.0", help="Version améliorée avec Excel")
-    with col3:
-        st.metric("**Langues**", "5", help="Français, Anglais, Espagnol, Allemand, Italien")
+    """Affichage de l'en-tête principal minimaliste"""
+    st.title("🔍 Optimiseur de Requêtes Conversationnelles SEO")
+    st.caption("Analyse basée sur les suggestions Google pour l'optimisation SEO avancée")
 
 def render_social_links():
     """Affichage des liens sociaux dans la sidebar"""
@@ -108,19 +90,19 @@ def create_excel_file(df: pd.DataFrame) -> BytesIO:
     return output
 
 def render_metrics(metrics: Dict[str, Any]):
-    """Affichage des métriques sous forme de colonnes avec design amélioré"""
+    """Affichage des métriques sous forme de colonnes avec design minimaliste"""
     if not metrics:
         return
     
     cols = st.columns(len(metrics))
     for i, (label, value) in enumerate(metrics.items()):
         with cols[i]:
-            # Conteneur stylisé pour chaque métrique
+            # Conteneur minimaliste pour chaque métrique
             st.markdown(f"""
-            <div style="background: white; border: 2px solid #e1e5e9; border-radius: 10px; 
-                        padding: 1rem; margin: 0.5rem 0; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                <div style="font-size: 0.9rem; color: #666; margin-bottom: 0.5rem;">{label}</div>
-                <div style="font-size: 1.8rem; font-weight: bold; color: #2c3e50;">{value:,}</div>
+            <div style="background: #f8f9fa; border: 1px solid #e1e5e9; border-radius: 5px; 
+                        padding: 0.5rem; margin: 0.25rem 0; text-align: center;">
+                <div style="font-size: 0.8rem; color: #666; margin-bottom: 0.25rem;">{label}</div>
+                <div style="font-size: 1.2rem; font-weight: bold; color: #2c3e50;">{value:,}</div>
             </div>
             """, unsafe_allow_html=True)
 
@@ -137,40 +119,40 @@ def render_status_indicator(label: str, status: str, details: str = ""):
     config = status_config.get(status, {"icon": "❓", "color": "gray", "text": "Inconnu"})
     
     st.markdown(f"""
-    <div style="display: flex; align-items: center; margin: 0.5rem 0; padding: 0.5rem; 
-                border-radius: 5px; background: rgba({config['color']}, 0.1); border-left: 4px solid {config['color']};">
-        <span style="font-size: 1.2rem; margin-right: 0.5rem;">{config['icon']}</span>
+    <div style="display: flex; align-items: center; margin: 0.25rem 0; padding: 0.25rem; 
+                border-radius: 3px; background: rgba({config['color']}, 0.05); border-left: 3px solid {config['color']};">
+        <span style="font-size: 0.9rem; margin-right: 0.25rem;">{config['icon']}</span>
         <div>
-            <div style="font-weight: bold; color: {config['color']};">{label}</div>
-            {f'<div style="font-size: 0.9rem; color: #666;">{details}</div>' if details else ''}
+            <div style="font-weight: bold; font-size: 0.9rem; color: {config['color']};">{label}</div>
+            {f'<div style="font-size: 0.8rem; color: #666;">{details}</div>' if details else ''}
         </div>
     </div>
     """, unsafe_allow_html=True)
 
 def render_progress_status(current_step: int, total_steps: int, message: str):
-    """Affichage du statut de progression avec design amélioré"""
+    """Affichage du statut de progression avec design minimaliste"""
     progress = current_step / total_steps if total_steps > 0 else 0
     
-    # Barre de progression stylisée
+    # Barre de progression simple
     st.markdown(f"""
-    <div style="margin: 1rem 0;">
-        <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
-            <span style="font-weight: bold;">Étape {current_step}/{total_steps}</span>
-            <span>{int(progress * 100)}%</span>
+    <div style="margin: 0.5rem 0;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
+            <span style="font-weight: bold; font-size: 0.9rem;">Étape {current_step}/{total_steps}</span>
+            <span style="font-size: 0.8rem;">{int(progress * 100)}%</span>
         </div>
-        <div style="width: 100%; height: 8px; background: #e1e5e9; border-radius: 4px; overflow: hidden;">
-            <div style="width: {progress * 100}%; height: 100%; background: linear-gradient(90deg, #667eea, #764ba2); 
-                        border-radius: 4px; transition: width 0.3s ease;"></div>
+        <div style="width: 100%; height: 6px; background: #e1e5e9; border-radius: 3px; overflow: hidden;">
+            <div style="width: {progress * 100}%; height: 100%; background: #667eea; 
+                        border-radius: 3px; transition: width 0.3s ease;"></div>
         </div>
     </div>
     """, unsafe_allow_html=True)
     
-    # Message de statut
+    # Message de statut compact
     st.markdown(f"""
-    <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin: 1rem 0; border-left: 4px solid #667eea;">
+    <div style="background: #f8f9fa; padding: 0.5rem; border-radius: 5px; margin: 0.5rem 0; border-left: 3px solid #667eea;">
         <div style="display: flex; align-items: center;">
-            <span style="font-size: 1.2rem; margin-right: 0.5rem;">⏳</span>
-            <span style="font-weight: 500;">{message}</span>
+            <span style="font-size: 0.9rem; margin-right: 0.25rem;">⏳</span>
+            <span style="font-weight: 500; font-size: 0.9rem;">{message}</span>
         </div>
     </div>
     """, unsafe_allow_html=True)
