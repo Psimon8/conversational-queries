@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 from typing import Dict, Any, List
 from .ui_components import render_metrics
+from collections import Counter
+import re
 
 class ResultsManager:
     """Gestionnaire pour l'affichage des résultats"""
@@ -10,6 +12,48 @@ class ResultsManager:
         self.results = results
         self.metadata = metadata
     
+    def _extract_1grams(self, suggestions: List[str]) -> List[str]:
+        """Extraire les 1-grams (mots uniques) des suggestions"""
+        all_words = []
+        for suggestion in suggestions:
+            # Nettoyer et découper en mots
+            words = re.findall(r'\b[a-zA-ZÀ-ÿ]+\b', suggestion.lower())
+            all_words.extend(words)
+        return all_words
+    
+    def _get_top_tags(self, suggestions_list: List[str], top_n: int = 20) -> List[tuple]:
+        """Obtenir les top N tags (1-grams) les plus fréquents"""
+        words = self._extract_1grams(suggestions_list)
+        
+        # Mots vides français et anglais à exclure
+        stop_words = {
+            'le', 'la', 'les', 'de', 'du', 'des', 'un', 'une', 'et', 'ou', 'à', 'au', 'aux',
+            'pour', 'par', 'sur', 'avec', 'dans', 'en', 'ce', 'cette', 'ces', 'son', 'sa',
+            'ses', 'mon', 'ma', 'mes', 'ton', 'ta', 'tes', 'notre', 'nos', 'votre', 'vos',
+            'leur', 'leurs', 'que', 'qui', 'dont', 'où', 'quand', 'comment', 'pourquoi',
+            'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of',
+            'with', 'by', 'how', 'what', 'when', 'where', 'why', 'which', 'that', 'this',
+            'these', 'those', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had'
+        }
+        
+        # Filtrer les mots vides et compter les occurrences
+        filtered_words = [word for word in words if word not in stop_words and len(word) > 2]
+        word_counts = Counter(filtered_words)
+        
+        return word_counts.most_common(top_n)
+    
+    def _filter_suggestions_by_tags(self, suggestions_df: pd.DataFrame, selected_tags: List[str]) -> pd.DataFrame:
+        """Filtrer les suggestions basées sur les tags sélectionnés"""
+        if not selected_tags:
+            return suggestions_df
+        
+        # Créer un pattern regex pour chercher les tags sélectionnés
+        pattern = '|'.join([rf'\b{re.escape(tag)}\b' for tag in selected_tags])
+        
+        # Filtrer les suggestions qui contiennent au moins un des tags sélectionnés
+        mask = suggestions_df['Suggestion Google'].str.contains(pattern, case=False, regex=True, na=False)
+        return suggestions_df[mask]
+
     def render_analysis_summary(self):
         """Afficher le résumé de l'analyse"""
         st.markdown("## 📊 Résumé de l'analyse")
@@ -73,11 +117,56 @@ class ResultsManager:
         
         suggestions_df = pd.DataFrame(self.results['all_suggestions'])
         
-        # Statistiques par niveau
-        level_stats = suggestions_df['Niveau'].value_counts().sort_index()
+        # Extraire les suggestions pour l'analyse des tags (exclure niveau 0)
+        suggestion_texts = [s['Suggestion Google'] for s in self.results['all_suggestions'] if s['Niveau'] > 0]
+        
+        if suggestion_texts:
+            # Analyse des tags les plus fréquents
+            top_tags = self._get_top_tags(suggestion_texts, 20)
+            
+            if top_tags:
+                st.markdown("**🏷️ Tags les plus fréquents (filtrage disponible)**")
+                
+                # Créer la liste des tags avec leurs occurrences pour l'affichage
+                tag_options = [f"{tag} ({count})" for tag, count in top_tags]
+                tag_values = [tag for tag, count in top_tags]
+                
+                # Widget multiselect pour choisir les tags à inclure
+                selected_tag_display = st.multiselect(
+                    "Sélectionner les tags à inclure dans l'affichage et l'export :",
+                    options=tag_options,
+                    default=tag_options,  # Tous sélectionnés par défaut
+                    help="Décochez un tag pour exclure toutes les suggestions contenant ce mot",
+                    key="tag_filter"
+                )
+                
+                # Extraire les tags réels (sans les comptes)
+                selected_tags = []
+                for display_tag in selected_tag_display:
+                    # Extraire le tag avant la parenthèse
+                    tag = display_tag.split(' (')[0]
+                    selected_tags.append(tag)
+                
+                # Filtrer les suggestions basées sur les tags sélectionnés
+                if selected_tags:
+                    filtered_df = self._filter_suggestions_by_tags(suggestions_df, selected_tags)
+                    
+                    # Afficher le nombre de suggestions filtrées
+                    if len(filtered_df) != len(suggestions_df):
+                        excluded_count = len(suggestions_df) - len(filtered_df)
+                        st.info(f"📊 {len(filtered_df)} suggestions affichées ({excluded_count} filtrées)")
+                else:
+                    # Aucun tag sélectionné = afficher seulement le niveau 0 (mots-clés de base)
+                    filtered_df = suggestions_df[suggestions_df['Niveau'] == 0]
+                    st.info(f"⚠️ Aucun tag sélectionné - Affichage des mots-clés de base uniquement")
+        else:
+            filtered_df = suggestions_df
+        
+        # Statistiques par niveau sur les données filtrées
+        level_stats = filtered_df['Niveau'].value_counts().sort_index()
         
         # Calculer le total
-        total_suggestions = len(suggestions_df)
+        total_suggestions = len(filtered_df)
         
         # Créer les colonnes pour toutes les métriques sur la même ligne
         cols = st.columns(len(level_stats) + 1)
@@ -110,21 +199,21 @@ class ResultsManager:
             from utils.ui_components import create_excel_file
             # Réorganiser les colonnes pour l'export Excel dans l'ordre demandé
             export_columns = ['Mot-clé', 'Parent', 'Niveau', 'Suggestion Google']
-            available_export_columns = [col for col in export_columns if col in suggestions_df.columns]
-            export_df = suggestions_df[available_export_columns] if available_export_columns else suggestions_df
+            available_export_columns = [col for col in export_columns if col in filtered_df.columns]
+            export_df = filtered_df[available_export_columns] if available_export_columns else filtered_df
             
             excel_data = create_excel_file(export_df)
             st.session_state['suggestions_excel_data'] = excel_data
             st.rerun()
         
-        # Tableau des suggestions
+        # Tableau des suggestions filtrées
         # Réorganiser les colonnes dans l'ordre demandé : Mot-clé / Parent / Niveau / Suggestion Google
         desired_columns = ['Mot-clé', 'Parent', 'Niveau', 'Suggestion Google']
-        available_columns = [col for col in desired_columns if col in suggestions_df.columns]
+        available_columns = [col for col in desired_columns if col in filtered_df.columns]
         if available_columns:
-            display_df = suggestions_df[available_columns]
+            display_df = filtered_df[available_columns]
         else:
-            display_df = suggestions_df
+            display_df = filtered_df
         
         st.dataframe(display_df)
     
