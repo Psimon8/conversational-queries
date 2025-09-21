@@ -232,8 +232,6 @@ class ConfigManager:
     
     def render_suggestion_levels(self) -> Dict[str, int]:
         """Configuration des niveaux de suggestions avec interface améliorée"""
-        st.markdown("### 📊 Configuration multi-niveaux")
-        st.info("🔍 Définissez la profondeur d'analyse des suggestions Google")
         
         # Niveau 1 - toujours actif
         col1, col2, col3 = st.columns(3)
@@ -309,14 +307,6 @@ class ConfigManager:
             total_estimated += level1_count * level2_count
         if enable_level3 and enable_level2:
             total_estimated += level1_count * level2_count * level3_count
-        
-        st.markdown("---")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("**Suggestions estimées par mot-clé**", total_estimated)
-        with col2:
-            active_levels = 1 + (1 if enable_level2 else 0) + (1 if enable_level3 and enable_level2 else 0)
-            st.metric("**Niveaux actifs**", active_levels)
         
         return {
             'level1_count': level1_count,

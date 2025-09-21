@@ -109,18 +109,11 @@ def render_analysis_tab(config_manager, google_client, question_generator,
         render_cost_estimation(keywords_input, levels_config, dataforseo_service)
     
     # Boutons d'action
-    col_analyze, col_clear = st.columns([4, 1])
-    
-    with col_analyze:
-        if keywords_input and st.button("🚀 Analyser les suggestions", type="primary"):
-            run_analysis(
-                keywords_input, levels_config, google_client, question_generator,
-                dataforseo_service, api_key, analysis_options
-            )
-    
-    with col_clear:
-        if st.button("🗑️ Effacer", help="Effacer les résultats"):
-            clear_results()
+    if keywords_input and st.button("🚀 Analyser les suggestions", type="primary"):
+        run_analysis(
+            keywords_input, levels_config, google_client, question_generator,
+            dataforseo_service, api_key, analysis_options
+        )
     
     # Affichage des résultats
     render_results_section(question_generator, analysis_options)
