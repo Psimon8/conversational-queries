@@ -91,19 +91,37 @@ class ResultsManager:
         with cols[-1]:
             st.metric("**Total**", total_suggestions)
         
-        # Bouton d'export Excel avec la même mise en forme
-        if st.button("📥 Exporter les Suggestions", type="primary"):
+        # Boutons d'export sur la même ligne
+        col1, col2 = st.columns([1, 1])
+        
+        with col1:
+            export_clicked = st.button("📥 Exporter les Suggestions", type="primary")
+        
+        with col2:
+            if 'suggestions_excel_data' in st.session_state:
+                st.download_button(
+                    label="📥 Télécharger Excel",
+                    data=st.session_state['suggestions_excel_data'],
+                    file_name=f"suggestions_google_{self.metadata.get('timestamp', 'export').replace(':', '-').replace(' ', '_')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+        
+        if export_clicked:
             from utils.ui_components import create_excel_file
             excel_data = create_excel_file(suggestions_df)
-            st.download_button(
-                label="📥 Télécharger Excel",
-                data=excel_data,
-                file_name=f"suggestions_google_{self.metadata.get('timestamp', 'export').replace(':', '-').replace(' ', '_')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+            st.session_state['suggestions_excel_data'] = excel_data
+            st.rerun()
         
         # Tableau des suggestions
-        st.dataframe(suggestions_df, use_container_width=True)
+        # Réorganiser les colonnes dans l'ordre demandé : Mot-clé / Parent / Niveau / Suggestion Google
+        desired_columns = ['Mot-clé', 'Parent', 'Niveau', 'Suggestion Google']
+        available_columns = [col for col in desired_columns if col in suggestions_df.columns]
+        if available_columns:
+            display_df = suggestions_df[available_columns]
+        else:
+            display_df = suggestions_df
+        
+        st.dataframe(display_df, use_container_width=True)
     
     def render_keywords_with_volume(self):
         """Afficher les mots-clés avec volume de recherche"""
