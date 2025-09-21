@@ -79,7 +79,7 @@ class ResultsManager:
         # Calculer le total
         total_suggestions = len(suggestions_df)
         
-        # Créer les colonnes pour les métriques (niveaux + total)
+        # Créer les colonnes pour toutes les métriques sur la même ligne
         cols = st.columns(len(level_stats) + 1)
         
         # Afficher les statistiques par niveau
@@ -91,18 +91,16 @@ class ResultsManager:
         with cols[-1]:
             st.metric("**Total**", total_suggestions)
         
-        # Bouton d'export Excel
-        col_export, _ = st.columns([1, 4])
-        with col_export:
-            if st.button("📊 Exporter Excel", type="secondary"):
-                from utils.ui_components import create_excel_file
-                excel_data = create_excel_file(suggestions_df)
-                st.download_button(
-                    label="📥 Télécharger Excel",
-                    data=excel_data,
-                    file_name=f"suggestions_google_{self.metadata.get('timestamp', 'export').replace(':', '-').replace(' ', '_')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+        # Bouton d'export Excel avec la même mise en forme
+        if st.button("� Exporter Excel", type="primary"):
+            from utils.ui_components import create_excel_file
+            excel_data = create_excel_file(suggestions_df)
+            st.download_button(
+                label="📥 Télécharger Excel",
+                data=excel_data,
+                file_name=f"suggestions_google_{self.metadata.get('timestamp', 'export').replace(':', '-').replace(' ', '_')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
         
         # Tableau des suggestions
         st.dataframe(suggestions_df, use_container_width=True)
