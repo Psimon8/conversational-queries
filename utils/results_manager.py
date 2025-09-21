@@ -64,57 +64,6 @@ class ResultsManager:
         
         return suggestions_df[final_mask]
     
-    def _render_clickable_tags(self, top_tags: List[tuple]) -> List[str]:
-        """Afficher les tags cliquables et retourner la liste des tags sélectionnés"""
-        st.markdown("**🏷️ Tags les plus fréquents (cliquez pour filtrer)**")
-        
-        # Initialiser les tags sélectionnés dans le session state si nécessaire
-        if 'selected_tags' not in st.session_state:
-            st.session_state.selected_tags = [tag for tag, count in top_tags]  # Tous sélectionnés par défaut
-        
-        # Créer des colonnes pour afficher les tags
-        num_cols = 5
-        cols = st.columns(num_cols)
-        
-        # Boutons pour sélectionner/désélectionner tous
-        control_col1, control_col2, control_col3 = st.columns([1, 1, 3])
-        
-        with control_col1:
-            if st.button("✅ Tout sélectionner", key="select_all_tags"):
-                st.session_state.selected_tags = [tag for tag, count in top_tags]
-                st.rerun()
-        
-        with control_col2:
-            if st.button("❌ Tout désélectionner", key="deselect_all_tags"):
-                st.session_state.selected_tags = []
-                st.rerun()
-        
-        # Afficher les tags sous forme de boutons cliquables
-        for i, (tag, count) in enumerate(top_tags):
-            col_idx = i % num_cols
-            with cols[col_idx]:
-                is_selected = tag in st.session_state.selected_tags
-                
-                # Style du bouton selon l'état
-                if is_selected:
-                    button_type = "primary"
-                    label = f"✓ {tag} ({count})"
-                else:
-                    button_type = "secondary"
-                    label = f"○ {tag} ({count})"
-                
-                # Bouton cliquable
-                if st.button(label, key=f"tag_{tag}_{i}", type=button_type):
-                    if is_selected:
-                        # Désélectionner le tag
-                        st.session_state.selected_tags.remove(tag)
-                    else:
-                        # Sélectionner le tag
-                        st.session_state.selected_tags.append(tag)
-                    st.rerun()
-        
-        return st.session_state.selected_tags
-
     def render_analysis_summary(self):
         """Afficher le résumé de l'analyse"""
         st.markdown("## 📊 Résumé de l'analyse")
@@ -406,6 +355,57 @@ class ResultsManager:
     def render_detailed_analysis(self):
         """Afficher l'analyse détaillée en expandeur"""
         if not self.results.get('enriched_keywords'):
+            return
+        
+        with st.expander("📈 Analyse détaillée des mots-clés et volumes"):
+            enriched_keywords = self.results['enriched_keywords']
+            
+            # Séparer par type d'origine
+            google_suggest_keywords = [k for k in enriched_keywords if '🔍 Suggestion Google' in k.get('origine', '') and '💰 Suggestion Ads' not in k.get('origine', '')]
+            google_ads_keywords = [k for k in enriched_keywords if '💰 Suggestion Ads' in k.get('origine', '') and '🔍 Suggestion Google' not in k.get('origine', '')]
+            main_keywords = [k for k in enriched_keywords if '🎯 Mot-clé principal' in k.get('origine', '')]
+            mixed_keywords = [k for k in enriched_keywords if '+' in k.get('origine', '')]
+            
+            tab1, tab2, tab3, tab4 = st.tabs(["🎯 Principaux", "🔍 Google Suggest", "💰 Google Ads", "🔗 Multiples origines"])
+            
+            with tab1:
+                self._render_keywords_tab(main_keywords, "mots-clés principaux")
+            
+            with tab2:
+                self._render_keywords_tab(google_suggest_keywords, "suggestions Google")
+            
+            with tab3:
+                self._render_keywords_tab(google_ads_keywords, "suggestions Google Ads")
+            
+            with tab4:
+                self._render_mixed_keywords_tab(mixed_keywords)
+    
+    def _render_keywords_tab(self, keywords: List[Dict[str, Any]], title: str):
+        """Afficher un onglet de mots-clés"""
+        if keywords:
+            st.markdown(f"**{len(keywords)} {title}**")
+            df = pd.DataFrame(keywords)
+            display_df = df[['keyword', 'search_volume', 'cpc', 'competition_level']].copy()
+            display_df.columns = ['Mot-clé', 'Volume', 'CPC', 'Concurrence']
+            display_df['Volume'] = display_df['Volume'].fillna(0).astype(int)
+            display_df['CPC'] = display_df['CPC'].fillna(0).round(2)
+            st.dataframe(display_df.sort_values('Volume', ascending=False))
+        else:
+            st.info(f"Aucun {title.split()[0]} avec volume")
+    
+    def _render_mixed_keywords_tab(self, mixed_keywords: List[Dict[str, Any]]):
+        """Afficher l'onglet des mots-clés avec multiples origines"""
+        if mixed_keywords:
+            st.markdown(f"**{len(mixed_keywords)} mots-clés avec multiples origines**")
+            st.info("Ces mots-clés apparaissent dans plusieurs sources (mot-clé principal + suggestions)")
+            df = pd.DataFrame(mixed_keywords)
+            display_df = df[['keyword', 'search_volume', 'cpc', 'competition_level', 'origine']].copy()
+            display_df.columns = ['Mot-clé', 'Volume', 'CPC', 'Concurrence', 'Origines']
+            display_df['Volume'] = display_df['Volume'].fillna(0).astype(int)
+            display_df['CPC'] = display_df['CPC'].fillna(0).round(2)
+            st.dataframe(display_df.sort_values('Volume', ascending=False))
+        else:
+            st.info("Aucun mot-clé avec multiples origines")
             return
         
         with st.expander("📈 Analyse détaillée des mots-clés et volumes"):
