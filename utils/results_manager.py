@@ -121,7 +121,7 @@ class ResultsManager:
         else:
             display_df = suggestions_df
         
-        st.dataframe(display_df, use_container_width=True)
+        st.dataframe(display_df, width=None)
     
     def render_keywords_with_volume(self):
         """Afficher les mots-clés avec volume de recherche"""
@@ -149,7 +149,7 @@ class ResultsManager:
         # Trier par volume décroissant
         display_keywords = display_keywords.sort_values('Volume/mois', ascending=False)
         
-        st.dataframe(display_keywords, use_container_width=True)
+        st.dataframe(display_keywords, width=None)
         
         # Statistiques
         self._render_keywords_statistics(display_keywords)
@@ -237,7 +237,7 @@ class ResultsManager:
                 if 'CPC' in display_df.columns:
                     display_df['CPC'] = display_df['CPC'].fillna(0).round(2)
                 
-                st.dataframe(display_df, use_container_width=True)
+                st.dataframe(display_df, width=None)
             else:
                 self._render_basic_questions_table(df)
         else:
@@ -247,7 +247,7 @@ class ResultsManager:
         """Afficher le tableau de questions basique"""
         display_cols = ['Question Conversationnelle', 'Suggestion Google', 'Thème', 'Intention', 'Score_Importance']
         available_cols = [col for col in display_cols if col in df.columns]
-        st.dataframe(df[available_cols], use_container_width=True)
+        st.dataframe(df[available_cols], width=None)
     
     def render_detailed_analysis(self):
         """Afficher l'analyse détaillée en expandeur"""
@@ -286,7 +286,7 @@ class ResultsManager:
             display_df.columns = ['Mot-clé', 'Volume', 'CPC', 'Concurrence']
             display_df['Volume'] = display_df['Volume'].fillna(0).astype(int)
             display_df['CPC'] = display_df['CPC'].fillna(0).round(2)
-            st.dataframe(display_df.sort_values('Volume', ascending=False), use_container_width=True)
+            st.dataframe(display_df.sort_values('Volume', ascending=False), width=None)
         else:
             st.info(f"Aucun {title.split()[0]} avec volume")
     
@@ -300,6 +300,6 @@ class ResultsManager:
             display_df.columns = ['Mot-clé', 'Volume', 'CPC', 'Concurrence', 'Origines']
             display_df['Volume'] = display_df['Volume'].fillna(0).astype(int)
             display_df['CPC'] = display_df['CPC'].fillna(0).round(2)
-            st.dataframe(display_df.sort_values('Volume', ascending=False), use_container_width=True)
+            st.dataframe(display_df.sort_values('Volume', ascending=False), width=None)
         else:
             st.info("Aucun mot-clé avec multiples origines")
