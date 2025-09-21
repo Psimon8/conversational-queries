@@ -88,15 +88,21 @@ def render_analysis_tab(config_manager, google_client, question_generator,
                        dataforseo_service, api_key, analysis_options):
     """Onglet d'analyse principal"""
     
-    # Input des mots-clés
-    keywords_input = st.text_area(
-        "🎯 Entrez vos mots-clés (un par ligne)",
-        placeholder="restaurant paris\nhôtel luxe\nvoyage écologique",
-        help="Un mot-clé par ligne"
-    )
+    # Interface principale en deux colonnes
+    col_keywords, col_config = st.columns(2)
     
-    # Configuration des niveaux
-    levels_config = config_manager.render_suggestion_levels()
+    with col_keywords:
+        # Input des mots-clés
+        keywords_input = st.text_area(
+            "🎯 Entrez vos mots-clés (un par ligne)",
+            placeholder="restaurant paris\nhôtel luxe\nvoyage écologique",
+            help="Un mot-clé par ligne",
+            height=200
+        )
+    
+    with col_config:
+        # Configuration des niveaux
+        levels_config = config_manager.render_suggestion_levels()
     
     # Estimation des coûts DataForSEO si configuré
     if dataforseo_service and dataforseo_service.is_configured():
