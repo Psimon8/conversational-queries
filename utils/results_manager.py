@@ -92,7 +92,7 @@ class ResultsManager:
             st.metric("**Total**", total_suggestions)
         
         # Bouton d'export Excel avec la même mise en forme
-        if st.button("� Exporter Excel", type="primary"):
+        if st.button("📥 Exporter les Suggestions", type="primary"):
             from utils.ui_components import create_excel_file
             excel_data = create_excel_file(suggestions_df)
             st.download_button(
