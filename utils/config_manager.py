@@ -259,10 +259,6 @@ class ConfigManager:
                 help="Nombre de suggestions à récupérer pour chaque suggestion de niveau 1 (0 = désactivé)",
                 key="level2_count"
             )
-            if level2_count == 0:
-                st.caption("🚫 Désactivé")
-            else:
-                st.caption(f"✅ {level2_count} suggestions par suggestion N1")
         
         with col3:
             st.markdown("**🔁 Niveau 3 - Suggestions³**")
@@ -276,12 +272,6 @@ class ConfigManager:
                 key="level3_count",
                 disabled=(level2_count == 0)
             )
-            if level2_count == 0:
-                st.caption("⚠️ Nécessite niveau 2")
-            elif level3_count == 0:
-                st.caption("🚫 Désactivé")
-            else:
-                st.caption(f"✅ {level3_count} suggestions par suggestion N2")
         
         return {
             'level1_count': level1_count,
@@ -324,6 +314,16 @@ class ConfigManager:
                 with col3:
                     st.metric("Coût total", f"${cost_estimate['total_cost']:.2f}")
             
+            cost_estimate = self.dataforseo_client.estimate_cost(estimated_total, True)
+            
+            with st.expander("💰 Estimation coûts DataForSEO"):
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Mots-clés estimés", f"{cost_estimate['keywords_count']:,}")
+                with col2:
+                    st.metric("Coût volumes", f"${cost_estimate['search_volume_cost']:.2f}")
+                with col3:
+                    st.metric("Coût total", f"${cost_estimate['total_cost']:.2f}")
             cost_estimate = self.dataforseo_client.estimate_cost(estimated_total, True)
             
             with st.expander("💰 Estimation coûts DataForSEO"):
