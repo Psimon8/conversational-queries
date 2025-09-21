@@ -333,9 +333,6 @@ def render_results_section(question_generator, analysis_options):
     # Utiliser le gestionnaire de résultats
     results_manager = ResultsManager(results, metadata)
     
-    # Afficher le résumé
-    results_manager.render_analysis_summary()
-    
     # Interface de sélection des thèmes (si applicable)
     if (results.get('stage') == 'themes_analyzed' and 
         metadata.get('generate_questions')):
