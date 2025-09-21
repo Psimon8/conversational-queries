@@ -247,7 +247,6 @@ class ConfigManager:
                 help="Nombre de suggestions directes à récupérer pour chaque mot-clé",
                 key="level1_count"
             )
-            st.caption(f"📈 {level1_count} suggestions par mot-clé")
         
         with col2:
             st.markdown("**🔄 Niveau 2 - Suggestions²**")
@@ -268,10 +267,8 @@ class ConfigManager:
                     help="Nombre de suggestions à récupérer pour chaque suggestion de niveau 1",
                     key="level2_count"
                 )
-                st.caption(f"📈 {level2_count} suggestions par suggestion N1")
             else:
                 level2_count = 0
-                st.caption("🚫 Désactivé")
         
         with col3:
             st.markdown("**🔁 Niveau 3 - Suggestions³**")
@@ -293,20 +290,12 @@ class ConfigManager:
                     help="Nombre de suggestions à récupérer pour chaque suggestion de niveau 2",
                     key="level3_count"
                 )
-                st.caption(f"📈 {level3_count} suggestions par suggestion N2")
             else:
                 level3_count = 0
                 if not enable_level2:
                     st.caption("⚠️ Nécessite niveau 2")
                 else:
                     st.caption("🚫 Désactivé")
-        
-        # Résumé visuel
-        total_estimated = level1_count
-        if enable_level2:
-            total_estimated += level1_count * level2_count
-        if enable_level3 and enable_level2:
-            total_estimated += level1_count * level2_count * level3_count
         
         return {
             'level1_count': level1_count,
@@ -323,6 +312,17 @@ class ConfigManager:
                 1 + levels['level1_count'] + 
                 (levels['level2_count'] if levels['enable_level2'] else 0)
             )
+            
+            cost_estimate = self.dataforseo_client.estimate_cost(estimated_total, True)
+            
+            with st.expander("💰 Estimation coûts DataForSEO"):
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Mots-clés estimés", f"{cost_estimate['keywords_count']:,}")
+                with col2:
+                    st.metric("Coût volumes", f"${cost_estimate['search_volume_cost']:.2f}")
+                with col3:
+                    st.metric("Coût total", f"${cost_estimate['total_cost']:.2f}")
             
             cost_estimate = self.dataforseo_client.estimate_cost(estimated_total, True)
             
