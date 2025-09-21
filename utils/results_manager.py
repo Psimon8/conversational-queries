@@ -108,7 +108,12 @@ class ResultsManager:
         
         if export_clicked:
             from utils.ui_components import create_excel_file
-            excel_data = create_excel_file(suggestions_df)
+            # Réorganiser les colonnes pour l'export Excel dans l'ordre demandé
+            export_columns = ['Mot-clé', 'Parent', 'Niveau', 'Suggestion Google']
+            available_export_columns = [col for col in export_columns if col in suggestions_df.columns]
+            export_df = suggestions_df[available_export_columns] if available_export_columns else suggestions_df
+            
+            excel_data = create_excel_file(export_df)
             st.session_state['suggestions_excel_data'] = excel_data
             st.rerun()
         
