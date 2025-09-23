@@ -42,22 +42,31 @@ class ResultsManager:
         
         return word_counts.most_common(top_n)
     
-    def _filter_suggestions_by_tags(self, suggestions_df: pd.DataFrame, selected_tags: List[str], all_tags: List[str]) -> pd.DataFrame:
-        """Filtrer les suggestions basées sur les tags sélectionnés"""
+    def _filter_suggestions_by_tags(self, suggestions_df: pd.DataFrame, selected_tags: List[str], all_tags: List[str], custom_exclude_words: str = "") -> pd.DataFrame:
+        """Filtrer les suggestions basées sur les tags sélectionnés et les mots personnalisés à exclure"""
         # Trouver les tags qui ont été désélectionnés
         deselected_tags = [tag for tag in all_tags if tag not in selected_tags]
         
-        if not deselected_tags:
-            # Si tous les tags sont sélectionnés, montrer toutes les suggestions
+        # Traiter les mots personnalisés à exclure
+        custom_words = []
+        if custom_exclude_words.strip():
+            # Séparer par virgules ou espaces et nettoyer
+            custom_words = [word.strip().lower() for word in re.split(r'[,\s]+', custom_exclude_words.strip()) if word.strip()]
+        
+        # Combiner tous les mots à exclure
+        all_exclude_words = deselected_tags + custom_words
+        
+        if not all_exclude_words:
+            # Si aucun mot à exclure, montrer toutes les suggestions
             return suggestions_df
         
-        # Créer un pattern regex pour les tags désélectionnés
-        exclude_pattern = '|'.join([rf'\b{re.escape(tag)}\b' for tag in deselected_tags])
+        # Créer un pattern regex pour tous les mots à exclure
+        exclude_pattern = '|'.join([rf'\b{re.escape(word)}\b' for word in all_exclude_words])
         
-        # Exclure les suggestions qui contiennent un des tags désélectionnés
+        # Exclure les suggestions qui contiennent un des mots à exclure
         exclude_mask = suggestions_df['Suggestion Google'].str.contains(exclude_pattern, case=False, regex=True, na=False)
         
-        # Garder les suggestions qui ne contiennent aucun tag désélectionné
+        # Garder les suggestions qui ne contiennent aucun mot à exclure
         # Toujours inclure le niveau 0 (mots-clés de base)
         level_0_mask = suggestions_df['Niveau'] == 0
         final_mask = ~exclude_mask | level_0_mask
@@ -135,20 +144,33 @@ class ResultsManager:
             top_tags = self._get_top_tags(suggestion_texts, 20)
             
             if top_tags:
-                st.markdown("**🏷️ Tags les plus fréquents (filtrage disponible)**")
+                st.markdown("**🏷️ Filtrage des suggestions**")
                 
-                # Créer la liste des tags avec leurs occurrences pour l'affichage
-                tag_options = [f"{tag} ({count})" for tag, count in top_tags]
-                all_tags = [tag for tag, count in top_tags]
+                # Créer deux colonnes pour les filtres sur la même ligne
+                col_tags, col_custom = st.columns([3, 1])
                 
-                # Widget multiselect pour choisir les tags à inclure
-                selected_tag_display = st.multiselect(
-                    "Décochez un tag pour exclure toutes les suggestions contenant ce mot :",
-                    options=tag_options,
-                    default=tag_options,  # Tous sélectionnés par défaut
-                    help="Les suggestions contenant les tags décochés seront exclues du tableau et de l'export",
-                    key="tag_filter"
-                )
+                with col_tags:
+                    # Créer la liste des tags avec leurs occurrences pour l'affichage
+                    tag_options = [f"{tag} ({count})" for tag, count in top_tags]
+                    all_tags = [tag for tag, count in top_tags]
+                    
+                    # Widget multiselect pour choisir les tags à inclure
+                    selected_tag_display = st.multiselect(
+                        "Décochez un tag pour exclure toutes les suggestions contenant ce mot :",
+                        options=tag_options,
+                        default=tag_options,  # Tous sélectionnés par défaut
+                        help="Les suggestions contenant les tags décochés seront exclues du tableau et de l'export",
+                        key="tag_filter"
+                    )
+                
+                with col_custom:
+                    # Champ de saisie pour mots personnalisés à exclure
+                    custom_exclude = st.text_input(
+                        "Mots à exclure :",
+                        placeholder="mot1, mot2, mot3",
+                        help="Saisissez des mots séparés par des virgules ou des espaces. Les suggestions contenant ces mots seront exclues.",
+                        key="custom_exclude_words"
+                    )
                 
                 # Extraire les tags réels (sans les comptes)
                 selected_tags = []
@@ -157,14 +179,24 @@ class ResultsManager:
                     tag = display_tag.split(' (')[0]
                     selected_tags.append(tag)
                 
-                # Filtrer les suggestions basées sur les tags sélectionnés
-                filtered_df = self._filter_suggestions_by_tags(suggestions_df, selected_tags, all_tags)
+                # Filtrer les suggestions basées sur les tags sélectionnés et les mots personnalisés
+                filtered_df = self._filter_suggestions_by_tags(suggestions_df, selected_tags, all_tags, custom_exclude)
                 
                 # Afficher le nombre de suggestions filtrées
-                if len(selected_tags) != len(all_tags):
+                if len(selected_tags) != len(all_tags) or custom_exclude.strip():
                     excluded_count = len(suggestions_df) - len(filtered_df)
+                    exclusion_reasons = []
+                    
                     deselected_tags = [tag for tag in all_tags if tag not in selected_tags]
-                    st.info(f"📊 {len(filtered_df)} suggestions affichées ({excluded_count} filtrées par exclusion des tags : {', '.join(deselected_tags)})")
+                    if deselected_tags:
+                        exclusion_reasons.append(f"tags: {', '.join(deselected_tags)}")
+                    
+                    if custom_exclude.strip():
+                        custom_words = [word.strip() for word in re.split(r'[,\s]+', custom_exclude.strip()) if word.strip()]
+                        exclusion_reasons.append(f"mots personnalisés: {', '.join(custom_words)}")
+                    
+                    if exclusion_reasons:
+                        st.info(f"📊 {len(filtered_df)} suggestions affichées ({excluded_count} filtrées par exclusion des {' et '.join(exclusion_reasons)})")
             else:
                 filtered_df = suggestions_df
         else:
