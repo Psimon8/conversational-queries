@@ -165,11 +165,12 @@ class ResultsManager:
                 
                 with col_custom:
                     # Champ de saisie pour mots personnalisés à exclure
-                    custom_exclude = st.text_input(
+                    custom_exclude = st.text_area(
                         "Mots à exclure :",
                         placeholder="mot1, mot2, mot3",
                         help="Saisissez des mots séparés par des virgules ou des espaces. Les suggestions contenant ces mots seront exclues.",
-                        key="custom_exclude_words"
+                        key="custom_exclude_words",
+                        height=132  # Hauteur similaire au multiselect
                     )
                 
                 # Extraire les tags réels (sans les comptes)
