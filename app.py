@@ -342,8 +342,11 @@ def run_step_collect_suggestions(
     pipeline_state['messages']['ads'] = "En attente des volumes"
 
     if pipeline_state['generate_questions']:
-        pipeline_state['step_status']['questions'] = 'pending'
-        pipeline_state['messages']['questions'] = "En attente des données enrichies"
+        pipeline_state['step_status']['questions'] = 'ready'
+        if pipeline_state['dataforseo_ready']:
+            pipeline_state['messages']['questions'] = "Prêt (volumes recommandés avant la génération)"
+        else:
+            pipeline_state['messages']['questions'] = "Prêt à générer à partir des suggestions"
     else:
         pipeline_state['step_status']['questions'] = 'disabled'
         pipeline_state['messages']['questions'] = "Génération désactivée"
@@ -579,31 +582,66 @@ def run_step_generate_questions(
         pipeline_state['messages']['questions'] = "Aucun générateur disponible"
         return
 
-    if pipeline_state['step_status'].get('ads') not in ['completed', StepStatus.PARTIAL.value, 'disabled']:
+    if pipeline_state['step_status'].get('ads') not in ['completed', StepStatus.PARTIAL.value, 'disabled', 'pending']:
         st.warning("⚠️ Terminez d'abord les étapes précédentes")
-        return
-
-    if not pipeline_state['enriched_data'].get('enriched_keywords'):
-        st.warning("⚠️ Données enrichies indisponibles")
-        pipeline_state['step_status']['questions'] = 'error'
-        pipeline_state['messages']['questions'] = "Aucune donnée pour générer"
         return
 
     pipeline_state['step_status']['questions'] = 'running'
     pipeline_state['messages']['questions'] = "Analyse des thèmes"
 
-    themes_analysis = analyze_themes_with_volume_filter(
-        pipeline_state['keywords'],
-        pipeline_state['suggestions'],
-        pipeline_state['enriched_data'],
-        question_generator,
-        analysis_options['language']
-    )
+    has_enriched_keywords = bool(pipeline_state['enriched_data'].get('enriched_keywords'))
+
+    if has_enriched_keywords:
+        themes_analysis = analyze_themes_with_volume_filter(
+            pipeline_state['keywords'],
+            pipeline_state['suggestions'],
+            pipeline_state['enriched_data'],
+            question_generator,
+            analysis_options['language']
+        )
+    else:
+        st.info("ℹ️ Volumes indisponibles : génération basée sur les suggestions collectées")
+        pipeline_state['messages']['questions'] = "Analyse des thèmes (suggestions)"
+
+        dataset = pipeline_state['enriched_data'] or {}
+        dataset.setdefault('volume_data', [])
+        dataset.setdefault('ads_suggestions', pipeline_state.get('ads_suggestions', []))
+        dataset.setdefault('enriched_keywords', [])
+        dataset.setdefault('keywords_with_volume', [])
+        dataset.setdefault('total_keywords', len(pipeline_state.get('suggestions', [])))
+        dataset.setdefault('top_20_keywords_count', 0)
+
+        steps_summary = dataset.get('steps', {})
+        steps_summary.setdefault('dataforseo_volumes', {
+            'status': StepStatus.SKIPPED.value,
+            'metadata': {'reason': 'not_run'}
+        })
+        steps_summary.setdefault('dataforseo_ads', {
+            'status': StepStatus.SKIPPED.value,
+            'metadata': {'reason': 'not_run'}
+        })
+        steps_summary.setdefault('dataforseo_enrichment', {
+            'status': StepStatus.SKIPPED.value,
+            'metadata': {}
+        })
+        steps_summary.setdefault('dataforseo_deduplication', {
+            'status': StepStatus.SKIPPED.value,
+            'metadata': {}
+        })
+        dataset['steps'] = steps_summary
+        pipeline_state['enriched_data'] = dataset
+
+        themes_analysis = analyze_themes_from_suggestions(
+            pipeline_state['keywords'],
+            pipeline_state['suggestions'],
+            question_generator,
+            analysis_options['language']
+        )
 
     if not themes_analysis:
         pipeline_state['step_status']['questions'] = 'error'
         pipeline_state['messages']['questions'] = "Aucun thème généré"
-        st.warning("⚠️ Aucun thème généré à partir des volumes disponibles")
+        st.warning("⚠️ Aucun thème généré à partir des données disponibles")
         return
 
     pipeline_state['themes_analysis'] = themes_analysis
@@ -756,10 +794,10 @@ def render_analysis_workflow_controls(
         disabled=ads_disabled
     )
 
-    questions_disabled = (
-        step_status.get('questions') == 'disabled' or
-        (step_status.get('ads') not in ['completed', StepStatus.PARTIAL.value, 'disabled'])
-    )
+    allowed_ads_states = {'completed', StepStatus.PARTIAL.value, 'disabled', 'pending'}
+    questions_disabled = step_status.get('questions') == 'disabled'
+    if not questions_disabled and step_status.get('ads') not in allowed_ads_states:
+        questions_disabled = True
 
     btn4 = btn_cols[3].button(
         "4️⃣ Génération questions",
@@ -968,6 +1006,31 @@ def analyze_themes_with_volume_filter(keywords, all_suggestions, enriched_data, 
                 themes = question_generator.analyze_suggestions_themes(fake_suggestions, keyword, language)
                 themes_by_keyword[keyword] = themes
     
+    return themes_by_keyword
+
+
+def analyze_themes_from_suggestions(keywords, all_suggestions, question_generator, language):
+    """Analyse des thèmes en se basant uniquement sur les suggestions"""
+    themes_by_keyword = {}
+
+    for keyword in keywords:
+        keyword_suggestions = [
+            suggestion for suggestion in all_suggestions
+            if suggestion['Mot-clé'] == keyword and suggestion['Niveau'] > 0
+        ]
+
+        if not keyword_suggestions:
+            continue
+
+        themes = question_generator.analyze_suggestions_themes(
+            keyword_suggestions,
+            keyword,
+            language
+        )
+
+        if themes:
+            themes_by_keyword[keyword] = themes
+
     return themes_by_keyword
 
 def save_analysis_results(all_suggestions, enriched_data, themes_analysis,
