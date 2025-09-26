@@ -2,6 +2,7 @@ import streamlit as st
 from openai import OpenAI
 import pandas as pd
 import time
+from typing import Any, Dict
 
 # Imports des modules refactorisés
 from utils.ui_components import setup_page_config, render_header, render_social_links
@@ -10,7 +11,7 @@ from utils.export_manager import ExportManager
 from utils.workflow_manager import WorkflowManager
 from utils.results_manager import ResultsManager
 from utils.keyword_utils import normalize_keyword, deduplicate_keywords_with_origins
-from services.dataforseo_service import DataForSEOService
+from services.dataforseo_service import DataForSEOService, StepStatus
 from question_generator import QuestionGenerator
 from google_suggestions import GoogleSuggestionsClient
 
@@ -187,17 +188,47 @@ def run_analysis(keywords_input, levels_config, google_client, question_generato
         # Étape 2: Enrichissement DataForSEO (optionnel)
         enriched_data = {}
         if dataforseo_service and dataforseo_service.is_configured():
-            workflow.update_step("dataforseo_volumes", "running")
-            
+            def pipeline_callback(step_name: str, status: StepStatus, payload: Dict[str, Any]):
+                step_names = {step.name for step in workflow.steps}
+                if step_name not in step_names:
+                    return
+
+                if status == StepStatus.RUNNING:
+                    workflow.update_step(step_name, "running")
+                elif status in {StepStatus.COMPLETED, StepStatus.PARTIAL, StepStatus.SKIPPED}:
+                    workflow.complete_step(step_name)
+                    if status == StepStatus.PARTIAL:
+                        metadata = payload.get('metadata', {})
+                        reason = metadata.get('reason')
+                        if reason:
+                            st.info(f"ℹ️ Étape {step_name} partielle: {reason}")
+                    elif status == StepStatus.SKIPPED:
+                        metadata = payload.get('metadata', {})
+                        reason = metadata.get('reason')
+                        if reason:
+                            st.info(f"ℹ️ Étape {step_name} ignorée: {reason}")
+                elif status == StepStatus.ERROR:
+                    error_message = payload.get('error', 'Erreur inconnue')
+                    workflow.error_step(step_name, error_message)
+
             suggestion_texts = [s['Suggestion Google'] for s in all_suggestions]
-            enriched_data = dataforseo_service.process_complete_analysis(keywords, suggestion_texts)
-            
-            if enriched_data:
-                workflow.complete_step("dataforseo_volumes")
-                if "dataforseo_ads" in [step.name for step in workflow.steps]:
-                    workflow.complete_step("dataforseo_ads")  # Ads inclus dans process_complete_analysis
-            else:
-                workflow.error_step("dataforseo_volumes", "Erreur lors de l'enrichissement DataForSEO")
+            enriched_report = dataforseo_service.process_complete_analysis(
+                keywords,
+                suggestion_texts,
+                progress_callback=pipeline_callback
+            )
+            enriched_data = enriched_report.to_dict()
+
+            has_critical_error = any(
+                step_result.status == StepStatus.ERROR
+                for name, step_result in enriched_report.steps.items()
+                if name in {"dataforseo_volumes", "dataforseo_ads"}
+            )
+
+            if has_critical_error:
+                workflow.finish_workflow()
+                st.error("❌ Analyse interrompue: erreur lors de l'enrichissement DataForSEO")
+                return
         
         # Étape 3: Analyse des thèmes (si demandée)
         themes_analysis = {}

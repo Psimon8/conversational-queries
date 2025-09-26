@@ -1,7 +1,82 @@
+import time
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import List, Dict, Any, Tuple, Optional, Callable
+
 import streamlit as st
-from typing import List, Dict, Any, Tuple
 from dataforseo_client import DataForSEOClient
 from utils.keyword_utils import deduplicate_keywords_with_origins
+
+
+class StepStatus(str, Enum):
+    """Statuts possibles pour une étape du pipeline DataForSEO"""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    PARTIAL = "partial"
+    ERROR = "error"
+    SKIPPED = "skipped"
+
+
+@dataclass
+class StepResult:
+    """Résultat d'une étape du pipeline"""
+
+    name: str
+    status: StepStatus
+    data: Any = None
+    error: Optional[str] = None
+    duration: float = 0.0
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class DataForSEOAnalysisReport:
+    """Rapport global d'une exécution DataForSEO"""
+
+    steps: Dict[str, StepResult] = field(default_factory=dict)
+    payload: Dict[str, Any] = field(default_factory=dict)
+
+    def add_step(self, result: StepResult) -> None:
+        self.steps[result.name] = result
+
+    def get_step(self, name: str) -> Optional[StepResult]:
+        return self.steps.get(name)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Retourne un dictionnaire compatible avec l'ancien format"""
+
+        steps_summary = {
+            name: {
+                'status': result.status.value,
+                'duration': result.duration,
+                'error': result.error,
+                'metadata': result.metadata
+            }
+            for name, result in self.steps.items()
+        }
+
+        return {
+            **self.payload,
+            'steps': steps_summary
+        }
+
+    @property
+    def volume_data(self) -> List[Dict[str, Any]]:
+        return self.payload.get('volume_data', [])
+
+    @property
+    def ads_suggestions(self) -> List[Dict[str, Any]]:
+        return self.payload.get('ads_suggestions', [])
+
+    @property
+    def enriched_keywords(self) -> List[Dict[str, Any]]:
+        return self.payload.get('enriched_keywords', [])
+
+    @property
+    def keywords_with_volume(self) -> List[Dict[str, Any]]:
+        return self.payload.get('keywords_with_volume', [])
 
 class DataForSEOService:
     """Service pour gérer les interactions avec DataForSEO"""
@@ -115,48 +190,163 @@ class DataForSEOService:
 
         return ads_suggestions
 
-    def process_complete_analysis(self, keywords: List[str],
-                                suggestions: List[str]) -> Dict[str, Any]:
-        """Processus complet d'enrichissement DataForSEO selon la logique demandée"""
+    def process_complete_analysis(
+        self,
+        keywords: List[str],
+        suggestions: List[str],
+        progress_callback: Optional[Callable[[str, StepStatus, Dict[str, Any]], None]] = None
+    ) -> DataForSEOAnalysisReport:
+        """Processus complet d'enrichissement DataForSEO avec suivi d'étapes"""
+
+        report = DataForSEOAnalysisReport()
+
+        def notify(step_name: str, status: StepStatus, payload: Optional[Dict[str, Any]] = None) -> None:
+            if progress_callback:
+                progress_callback(step_name, status, payload or {})
+
+        default_payload = {
+            'volume_data': [],
+            'ads_suggestions': [],
+            'enriched_keywords': [],
+            'keywords_with_volume': [],
+            'total_keywords': 0,
+            'top_20_keywords_count': 0
+        }
+
         if not self.is_configured():
-            return {}
+            error_message = "Configuration DataForSEO manquante"
+            metadata = {'reason': 'not_configured'}
+            report.add_step(StepResult('dataforseo_volumes', StepStatus.SKIPPED, error=error_message, metadata=metadata))
+            report.add_step(StepResult('dataforseo_ads', StepStatus.SKIPPED, metadata=metadata))
+            notify('dataforseo_volumes', StepStatus.SKIPPED, {'error': error_message})
+            notify('dataforseo_ads', StepStatus.SKIPPED, {'error': error_message})
+            st.warning("⚠️ DataForSEO non configuré")
+            report.payload = default_payload
+            return report
 
+        volume_results: Dict[str, Any] = {}
+        ads_suggestions: List[Dict[str, Any]] = []
+        enriched_keywords: List[Dict[str, Any]] = []
+        deduplicated_keywords: List[Dict[str, Any]] = []
+
+        # Étape 1: Récupération des volumes
+        st.info("📊 Étape 1: Récupération des volumes de recherche pour tous les mots-clés et suggestions")
+        notify('dataforseo_volumes', StepStatus.RUNNING)
+        start = time.perf_counter()
         try:
-            # Étape 1: Récupération des volumes pour tous les mots-clés et suggestions
-            st.info("📊 Étape 1: Récupération des volumes de recherche pour tous les mots-clés et suggestions")
             volume_results = self.enrich_keywords_with_volumes(keywords, suggestions)
-
-            if not volume_results.get('keywords_with_volume'):
-                st.warning("⚠️ Aucun mot-clé avec volume de recherche trouvé")
-                return volume_results
-
-            # Étape 2: Utilisation de l'API Keywords for Keywords pour les 20 mots-clés les plus populaires
-            st.info("🔍 Étape 2: Utilisation de l'API Keywords for Keywords pour les 20 mots-clés les plus populaires")
-            ads_suggestions = self.get_ads_suggestions(volume_results['keywords_with_volume'])
-
-            # Étape 3: Création de la liste enrichie finale
-            enriched_keywords = self._create_enriched_keywords_list(
-                keywords, volume_results.get('volume_data', []), ads_suggestions
-            )
-
-            # Étape 4: Déduplication des mots-clés
-            deduplicated_keywords = deduplicate_keywords_with_origins(enriched_keywords)
-
-            result = {
-                'volume_data': volume_results.get('volume_data', []),
-                'ads_suggestions': ads_suggestions,
-                'enriched_keywords': deduplicated_keywords,
-                'keywords_with_volume': volume_results.get('keywords_with_volume', []),
-                'total_keywords': len(deduplicated_keywords),
-                'top_20_keywords_count': len(volume_results.get('keywords_with_volume', [])[:20])
+            duration = time.perf_counter() - start
+            keywords_with_volume = volume_results.get('keywords_with_volume', [])
+            status = StepStatus.COMPLETED if keywords_with_volume else StepStatus.PARTIAL
+            metadata = {
+                'input_keywords': len(keywords),
+                'input_suggestions': len(suggestions),
+                'total_unique_keywords': volume_results.get('total_keywords', len(set(keywords + suggestions))),
+                'keywords_with_volume': len(keywords_with_volume)
             }
+            report.add_step(StepResult(
+                'dataforseo_volumes',
+                status,
+                data=volume_results,
+                duration=duration,
+                metadata=metadata
+            ))
+            notify('dataforseo_volumes', status, {'metadata': metadata})
+            if status == StepStatus.PARTIAL:
+                st.warning("⚠️ Aucun mot-clé avec volume de recherche trouvé")
+        except (ConnectionError, ValueError, KeyError, RuntimeError) as exc:
+            duration = time.perf_counter() - start
+            error_message = str(exc)
+            st.error(f"❌ Erreur DataForSEO (volumes): {error_message}")
+            report.add_step(StepResult(
+                'dataforseo_volumes',
+                StepStatus.ERROR,
+                error=error_message,
+                duration=duration
+            ))
+            notify('dataforseo_volumes', StepStatus.ERROR, {'error': error_message})
+            report.payload = default_payload
+            return report
 
-            st.success(f"✅ Analyse DataForSEO terminée: {len(deduplicated_keywords)} mots-clés enrichis, {len(ads_suggestions)} suggestions Ads")
-            return result
+        # Étape 2: Suggestions Ads si des volumes sont disponibles
+        keywords_with_volume = volume_results.get('keywords_with_volume', [])
+        if keywords_with_volume:
+            st.info("🔍 Étape 2: Utilisation de l'API Keywords for Keywords pour les 20 mots-clés les plus populaires")
+            notify('dataforseo_ads', StepStatus.RUNNING)
+            start = time.perf_counter()
+            try:
+                ads_suggestions = self.get_ads_suggestions(keywords_with_volume)
+                duration = time.perf_counter() - start
+                status = StepStatus.COMPLETED if ads_suggestions else StepStatus.PARTIAL
+                metadata = {
+                    'requested_keywords': min(20, len(keywords_with_volume)),
+                    'returned_suggestions': len(ads_suggestions)
+                }
+                report.add_step(StepResult(
+                    'dataforseo_ads',
+                    status,
+                    data=ads_suggestions,
+                    duration=duration,
+                    metadata=metadata
+                ))
+                notify('dataforseo_ads', status, {'metadata': metadata})
+            except (ConnectionError, ValueError, KeyError, RuntimeError) as exc:
+                duration = time.perf_counter() - start
+                error_message = str(exc)
+                st.error(f"❌ Erreur DataForSEO (Ads): {error_message}")
+                report.add_step(StepResult(
+                    'dataforseo_ads',
+                    StepStatus.ERROR,
+                    error=error_message,
+                    duration=duration
+                ))
+                notify('dataforseo_ads', StepStatus.ERROR, {'error': error_message})
+        else:
+            metadata = {'reason': 'no_keywords_with_volume'}
+            report.add_step(StepResult('dataforseo_ads', StepStatus.SKIPPED, metadata=metadata))
+            notify('dataforseo_ads', StepStatus.SKIPPED, {'metadata': metadata})
 
-        except (ConnectionError, ValueError, KeyError, RuntimeError) as e:
-            st.error(f"❌ Erreur DataForSEO: {str(e)}")
-            return {}
+        # Étape 3: Création de la liste enrichie finale
+        start = time.perf_counter()
+        enriched_keywords = self._create_enriched_keywords_list(
+            keywords,
+            volume_results.get('volume_data', []),
+            ads_suggestions
+        )
+        duration = time.perf_counter() - start
+        report.add_step(StepResult(
+            'dataforseo_enrichment',
+            StepStatus.COMPLETED,
+            data=enriched_keywords,
+            duration=duration,
+            metadata={'count': len(enriched_keywords)}
+        ))
+
+        # Étape 4: Déduplication des mots-clés
+        start = time.perf_counter()
+        deduplicated_keywords = deduplicate_keywords_with_origins(enriched_keywords)
+        duration = time.perf_counter() - start
+        report.add_step(StepResult(
+            'dataforseo_deduplication',
+            StepStatus.COMPLETED,
+            data=deduplicated_keywords,
+            duration=duration,
+            metadata={'count': len(deduplicated_keywords)}
+        ))
+
+        report.payload = {
+            'volume_data': volume_results.get('volume_data', []),
+            'ads_suggestions': ads_suggestions,
+            'enriched_keywords': deduplicated_keywords,
+            'keywords_with_volume': volume_results.get('keywords_with_volume', []),
+            'total_keywords': len(deduplicated_keywords),
+            'top_20_keywords_count': min(20, len(volume_results.get('keywords_with_volume', [])))
+        }
+
+        st.success(
+            f"✅ Analyse DataForSEO terminée: {len(deduplicated_keywords)} mots-clés enrichis, {len(ads_suggestions)} suggestions Ads"
+        )
+        return report
 
     def _create_enriched_keywords_list(self, original_keywords: List[str],
                                      volume_data: List[Dict[str, Any]],

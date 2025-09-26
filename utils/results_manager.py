@@ -83,6 +83,9 @@ class ResultsManager:
         
         # Informations contextuelles
         self._render_context_info()
+
+        # Statut du pipeline DataForSEO le cas échéant
+        self._render_dataforseo_pipeline_summary()
     
     def _calculate_main_metrics(self) -> Dict[str, Any]:
         """Calculer les métriques principales"""
@@ -126,6 +129,61 @@ class ResultsManager:
                 st.info("✨ **Questions conversationnelles:** Activées")
             else:
                 st.info("📝 **Mode:** Suggestions uniquement")
+
+    def _render_dataforseo_pipeline_summary(self):
+        """Afficher un résumé des étapes DataForSEO"""
+        dataforseo_data = self.results.get('dataforseo_data', {})
+        steps = dataforseo_data.get('steps', {})
+
+        if not steps:
+            return
+
+        st.markdown("### ⚙️ Pipeline DataForSEO")
+
+        status_icons = {
+            'completed': '✅',
+            'partial': '🟡',
+            'error': '❌',
+            'skipped': '⏭️',
+            'running': '🔄',
+            'pending': '⏳'
+        }
+
+        step_labels = {
+            'dataforseo_volumes': 'Volumes de recherche',
+            'dataforseo_ads': 'Suggestions Ads',
+            'dataforseo_enrichment': 'Enrichissement des données',
+            'dataforseo_deduplication': 'Déduplication'
+        }
+
+        for step_name, step_info in steps.items():
+            status = step_info.get('status', 'pending')
+            icon = status_icons.get(status, 'ℹ️')
+            label = step_labels.get(step_name, step_name)
+            duration = step_info.get('duration')
+            metadata = step_info.get('metadata') or {}
+            details = []
+
+            if isinstance(duration, (int, float)) and duration:
+                details.append(f"{duration:.2f}s")
+
+            if status == 'error' and step_info.get('error'):
+                details.append(f"Erreur : {step_info['error']}")
+
+            if step_name == 'dataforseo_volumes' and metadata.get('keywords_with_volume') is not None:
+                details.append(f"{metadata['keywords_with_volume']} mots-clés avec volume")
+
+            if step_name == 'dataforseo_ads' and metadata.get('returned_suggestions') is not None:
+                details.append(f"{metadata['returned_suggestions']} suggestions")
+
+            if metadata.get('reason'):
+                details.append(metadata['reason'])
+
+            detail_text = " • ".join(details) if details else ""
+            if detail_text:
+                st.write(f"{icon} **{label}** — {detail_text}")
+            else:
+                st.write(f"{icon} **{label}**")
     
     def render_suggestions_results(self):
         """Afficher les résultats des suggestions"""
