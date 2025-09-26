@@ -7,15 +7,14 @@ from typing import Dict, Any, List
 def setup_page_config():
     """Configuration de la page Streamlit"""
     st.set_page_config(
-        page_title="SEO Conversational Queries Optimizer",
+        page_title="SEO queries explorer",
         page_icon="🔍",
         layout="wide"
     )
 
 def render_header():
     """Affichage de l'en-tête principal minimaliste"""
-    st.title("🔍 Optimiseur de Requêtes Conversationnelles SEO")
-    st.caption("Analyse basée sur les suggestions Google pour l'optimisation SEO avancée")
+    st.title("SEO queries explorer")
 
 def render_social_links():
     """Affichage des liens sociaux dans la sidebar"""
