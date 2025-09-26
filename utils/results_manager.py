@@ -4,6 +4,7 @@ from typing import Dict, Any, List
 from .ui_components import render_metrics
 from collections import Counter
 import re
+import math
 
 class ResultsManager:
     """Gestionnaire pour l'affichage des résultats"""
@@ -193,6 +194,9 @@ class ResultsManager:
         st.markdown("### 📝 Suggestions Google")
         
         suggestions_df = pd.DataFrame(self.results['all_suggestions'])
+        selected_tags: List[str] = []
+        all_tags: List[str] = []
+        custom_exclude = ""
         
         # Extraire les suggestions pour l'analyse des tags (exclure niveau 0)
         suggestion_texts = [s['Suggestion Google'] for s in self.results['all_suggestions'] if s['Niveau'] > 0]
@@ -261,6 +265,38 @@ class ResultsManager:
         else:
             filtered_df = suggestions_df
         
+        filter_active = (
+            len(filtered_df) != len(suggestions_df)
+            or bool(custom_exclude.strip())
+            or (all_tags and len(selected_tags) != len(all_tags))
+        )
+
+        if filter_active:
+            filtered_records = [
+                {
+                    key: (
+                        None
+                        if isinstance((cleaned_value := (value.item() if hasattr(value, "item") else value)), float) and math.isnan(cleaned_value)
+                        else cleaned_value
+                    )
+                    for key, value in row.items()
+                }
+                for row in filtered_df.to_dict(orient='records')
+            ]
+            st.session_state['filtered_suggestions_records'] = filtered_records
+            st.session_state['filtered_tags_state'] = {
+                'selected_tags': selected_tags,
+                'all_tags': all_tags,
+                'custom_exclude_words': custom_exclude
+            }
+            if st.session_state.get('analysis_results'):
+                st.session_state.analysis_results['filtered_suggestions'] = filtered_records
+        else:
+            st.session_state.pop('filtered_suggestions_records', None)
+            st.session_state.pop('filtered_tags_state', None)
+            if st.session_state.get('analysis_results'):
+                st.session_state.analysis_results.pop('filtered_suggestions', None)
+
         # Statistiques par niveau sur les données filtrées
         level_stats = filtered_df['Niveau'].value_counts().sort_index()
         

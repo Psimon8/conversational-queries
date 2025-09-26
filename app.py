@@ -164,6 +164,24 @@ def parse_keywords_input(keywords_input: str) -> List[str]:
     return [kw.strip() for kw in keywords_input.split('\n') if kw.strip()]
 
 
+def compute_suggestions_signature(suggestions: List[Dict[str, Any]]) -> Optional[str]:
+    """Calculer une signature déterministe des suggestions"""
+    if not suggestions:
+        return None
+
+    normalized = [
+        (
+            item.get('Mot-clé', ''),
+            item.get('Suggestion Google', ''),
+            item.get('Niveau', 0),
+            item.get('Parent', '')
+        )
+        for item in suggestions
+    ]
+    normalized.sort()
+    return json.dumps(normalized, ensure_ascii=False)
+
+
 def _build_default_pipeline_state(
     signature: str,
     levels_config: Dict[str, Any],
@@ -174,11 +192,14 @@ def _build_default_pipeline_state(
     return {
         'signature': signature,
         'keywords': [],
+        'suggestions_original': [],
         'levels_config': levels_config.copy(),
         'analysis_options': analysis_options.copy(),
         'generate_questions': False,
         'dataforseo_ready': False,
         'api_key_available': False,
+        'filtered_applied': False,
+        'suggestions_active_signature': None,
         'step_status': {
             'suggestions': 'pending',
             'volumes': 'pending',
@@ -226,6 +247,8 @@ def ensure_pipeline_state(
         )
         st.session_state.analysis_results = None
         st.session_state.analysis_metadata = None
+        st.session_state.pop('filtered_suggestions_records', None)
+        st.session_state.pop('filtered_tags_state', None)
     elif st.session_state.pipeline_state.get('signature') != config_signature:
         st.session_state.pipeline_state = _build_default_pipeline_state(
             config_signature,
@@ -234,6 +257,8 @@ def ensure_pipeline_state(
         )
         st.session_state.analysis_results = None
         st.session_state.analysis_metadata = None
+        st.session_state.pop('filtered_suggestions_records', None)
+        st.session_state.pop('filtered_tags_state', None)
     else:
         pipeline_state = st.session_state.pipeline_state
         pipeline_state['levels_config'] = levels_config.copy()
@@ -273,7 +298,85 @@ def reset_analysis_workflow(clear_results: bool = True) -> None:
     if clear_results:
         st.session_state.analysis_results = None
         st.session_state.analysis_metadata = None
+    st.session_state.pop('filtered_suggestions_records', None)
+    st.session_state.pop('filtered_tags_state', None)
     st.rerun()
+
+
+def invalidate_downstream_steps(pipeline_state: Dict[str, Any]) -> None:
+    """Remettre à zéro les étapes dépendantes après changement de suggestions"""
+
+    pipeline_state['volume_results'] = None
+    pipeline_state['ads_suggestions'] = []
+    pipeline_state['enriched_data'] = {}
+    pipeline_state['themes_analysis'] = {}
+
+    dataforseo_ready = pipeline_state.get('dataforseo_ready', False)
+    generate_questions = pipeline_state.get('generate_questions', False)
+
+    pipeline_state['step_status']['volumes'] = 'ready' if dataforseo_ready else 'disabled'
+    pipeline_state['messages']['volumes'] = (
+        "Prêt à récupérer les volumes" if dataforseo_ready else "Configurer DataForSEO pour activer cette étape"
+    )
+
+    pipeline_state['step_status']['ads'] = 'pending' if dataforseo_ready else 'disabled'
+    pipeline_state['messages']['ads'] = (
+        "En attente des volumes" if dataforseo_ready else "Indisponible (DataForSEO)"
+    )
+
+    if generate_questions:
+        if dataforseo_ready:
+            pipeline_state['step_status']['questions'] = 'pending'
+            pipeline_state['messages']['questions'] = "En attente des données enrichies"
+        else:
+            pipeline_state['step_status']['questions'] = 'ready'
+            pipeline_state['messages']['questions'] = "Prêt à générer à partir des suggestions"
+    else:
+        pipeline_state['step_status']['questions'] = 'disabled'
+        pipeline_state['messages']['questions'] = "Génération désactivée"
+
+    results = st.session_state.get('analysis_results')
+    if results:
+        results['filtered_suggestions'] = pipeline_state.get('suggestions', [])
+        results['dataforseo_data'] = {}
+        results['enriched_keywords'] = []
+        results['themes_analysis'] = {}
+        results['final_consolidated_data'] = []
+        results['selected_themes_by_keyword'] = {}
+        results['stage'] = 'suggestions_collected'
+
+
+def synchronize_filtered_suggestions(pipeline_state: Dict[str, Any]) -> None:
+    """Appliquer les filtres de suggestions au pipeline si nécessaire"""
+
+    filtered_records = st.session_state.get('filtered_suggestions_records')
+    use_filtered = bool(filtered_records)
+
+    if use_filtered:
+        target_suggestions = filtered_records
+    else:
+        target_suggestions = pipeline_state.get('suggestions_original') or pipeline_state.get('suggestions', [])
+
+    new_signature = compute_suggestions_signature(target_suggestions)
+
+    if new_signature == pipeline_state.get('suggestions_active_signature'):
+        return
+
+    pipeline_state['suggestions'] = target_suggestions
+    pipeline_state['suggestions_active_signature'] = new_signature
+    pipeline_state['filtered_applied'] = use_filtered
+
+    if pipeline_state['step_status'].get('suggestions') == 'completed':
+        if use_filtered:
+            pipeline_state['messages']['suggestions'] = f"{len(target_suggestions)} suggestions filtrées"
+        else:
+            pipeline_state['messages']['suggestions'] = f"{len(target_suggestions)} suggestions collectées"
+        invalidate_downstream_steps(pipeline_state)
+    else:
+        pipeline_state['messages']['suggestions'] = pipeline_state['messages'].get('suggestions', '')
+
+    if st.session_state.get('analysis_results'):
+        st.session_state.analysis_results['filtered_suggestions'] = target_suggestions
 
 
 def run_step_collect_suggestions(
@@ -315,7 +418,10 @@ def run_step_collect_suggestions(
     pipeline_state['keywords'] = keywords
     pipeline_state['levels_config'] = levels_config.copy()
     pipeline_state['analysis_options'] = analysis_options.copy()
+    pipeline_state['suggestions_original'] = all_suggestions
     pipeline_state['suggestions'] = all_suggestions
+    pipeline_state['suggestions_active_signature'] = compute_suggestions_signature(all_suggestions)
+    pipeline_state['filtered_applied'] = False
     pipeline_state['volume_results'] = None
     pipeline_state['ads_suggestions'] = []
     pipeline_state['enriched_data'] = {}
@@ -366,6 +472,7 @@ def run_step_collect_suggestions(
 
     if st.session_state.analysis_results:
         st.session_state.analysis_results['stage'] = 'suggestions_collected'
+        st.session_state.analysis_results['filtered_suggestions'] = all_suggestions
 
     st.success("✅ Suggestions Google collectées")
 
@@ -756,6 +863,8 @@ def render_analysis_workflow_controls(
     """Interface utilisateur des étapes successives"""
 
     pipeline_state = st.session_state.pipeline_state
+
+    synchronize_filtered_suggestions(pipeline_state)
 
     st.markdown("### 🧭 Workflow d'analyse")
 
