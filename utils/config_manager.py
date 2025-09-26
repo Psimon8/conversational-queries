@@ -186,7 +186,7 @@ class ConfigManager:
         # Génération de questions
         generate_questions = st.sidebar.checkbox(
             "✨ Générer questions conversationnelles",
-            value=True,
+            value=False,
             help="Analyse thématique + génération de questions basées sur les volumes",
             key="generate_questions"
         )
