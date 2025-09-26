@@ -351,7 +351,7 @@ class ResultsManager:
         else:
             display_df = filtered_df
         
-        st.dataframe(display_df, use_container_width=True)
+        st.dataframe(display_df, width='stretch')
     
     def render_keywords_with_volume(self):
         """Afficher les mots-clés avec volume de recherche"""

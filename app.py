@@ -875,7 +875,7 @@ def render_analysis_workflow_controls(
     btn1 = btn_cols[0].button(
         "1️⃣ Suggestions",
         type="primary",
-        use_container_width=True,
+        width='stretch',
         disabled=not bool(parse_keywords_input(keywords_input))
     )
 
@@ -887,7 +887,7 @@ def render_analysis_workflow_controls(
     btn2 = btn_cols[1].button(
         "2️⃣ Volumes",
         type="secondary",
-        use_container_width=True,
+        width='stretch',
         disabled=volumes_disabled
     )
 
@@ -899,7 +899,7 @@ def render_analysis_workflow_controls(
     btn3 = btn_cols[2].button(
         "3️⃣ Recherche mots-clés",
         type="secondary",
-        use_container_width=True,
+        width='stretch',
         disabled=ads_disabled
     )
 
@@ -911,7 +911,7 @@ def render_analysis_workflow_controls(
     btn4 = btn_cols[3].button(
         "4️⃣ Génération questions",
         type="secondary",
-        use_container_width=True,
+        width='stretch',
         disabled=questions_disabled
     )
 
@@ -937,7 +937,7 @@ def render_analysis_workflow_controls(
     render_step_status_summary(pipeline_state)
 
     reset_col, _ = st.columns([1, 3])
-    if reset_col.button("🧹 Réinitialiser le workflow", use_container_width=True):
+    if reset_col.button("🧹 Réinitialiser le workflow", width='stretch'):
         reset_analysis_workflow()
 
 def run_analysis(keywords_input, levels_config, google_client, question_generator,
