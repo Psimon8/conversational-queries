@@ -1,8 +1,9 @@
+import json
 import streamlit as st
 from openai import OpenAI
 import pandas as pd
 import time
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 # Imports des modules refactorisés
 from utils.ui_components import setup_page_config, render_header, render_social_links
@@ -68,6 +69,8 @@ def initialize_session_state():
         st.session_state.analysis_results = None
     if 'analysis_metadata' not in st.session_state:
         st.session_state.analysis_metadata = None
+    if 'pipeline_state' not in st.session_state:
+        st.session_state.pipeline_state = None
 
 def render_main_interface(config_manager, google_client, question_generator, 
                          dataforseo_service, api_key, analysis_options):
@@ -109,12 +112,24 @@ def render_analysis_tab(config_manager, google_client, question_generator,
     if dataforseo_service and dataforseo_service.is_configured():
         render_cost_estimation(keywords_input, levels_config, dataforseo_service)
     
-    # Boutons d'action
-    if keywords_input and st.button("🚀 Analyser les suggestions", type="primary"):
-        run_analysis(
-            keywords_input, levels_config, google_client, question_generator,
-            dataforseo_service, api_key, analysis_options
-        )
+    # Gestion du workflow par étapes
+    ensure_pipeline_state(
+        keywords_input,
+        levels_config,
+        analysis_options,
+        api_key,
+        dataforseo_service
+    )
+
+    render_analysis_workflow_controls(
+        keywords_input,
+        levels_config,
+        analysis_options,
+        google_client,
+        question_generator,
+        dataforseo_service,
+        api_key
+    )
     
     # Affichage des résultats
     render_results_section(question_generator, analysis_options)
@@ -142,6 +157,641 @@ def render_cost_estimation(keywords_input, levels_config, dataforseo_service):
             st.metric("Coût volumes", f"${cost_info['search_volume_cost']:.2f}")
         with col3:
             st.metric("Coût total estimé", f"${cost_info['total_cost']:.2f}")
+
+
+def parse_keywords_input(keywords_input: str) -> List[str]:
+    """Nettoyer et transformer la saisie utilisateur en liste de mots-clés"""
+    return [kw.strip() for kw in keywords_input.split('\n') if kw.strip()]
+
+
+def _build_default_pipeline_state(
+    signature: str,
+    levels_config: Dict[str, Any],
+    analysis_options: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Initialiser un état de pipeline vierge"""
+
+    return {
+        'signature': signature,
+        'keywords': [],
+        'levels_config': levels_config.copy(),
+        'analysis_options': analysis_options.copy(),
+        'generate_questions': False,
+        'dataforseo_ready': False,
+        'api_key_available': False,
+        'step_status': {
+            'suggestions': 'pending',
+            'volumes': 'pending',
+            'ads': 'pending',
+            'questions': 'pending'
+        },
+        'messages': {
+            'suggestions': '',
+            'volumes': '',
+            'ads': '',
+            'questions': ''
+        },
+        'suggestions': [],
+        'volume_results': None,
+        'ads_suggestions': [],
+        'enriched_data': {},
+        'themes_analysis': {},
+        'errors': {}
+    }
+
+
+def ensure_pipeline_state(
+    keywords_input: str,
+    levels_config: Dict[str, Any],
+    analysis_options: Dict[str, Any],
+    api_key: Optional[str],
+    dataforseo_service: Optional[DataForSEOService]
+) -> None:
+    """Synchroniser le state du pipeline avec la configuration actuelle"""
+
+    config_signature = json.dumps(
+        {
+            'keywords_input': keywords_input,
+            'levels_config': levels_config,
+            'analysis_options': analysis_options
+        },
+        sort_keys=True
+    )
+
+    if st.session_state.pipeline_state is None:
+        st.session_state.pipeline_state = _build_default_pipeline_state(
+            config_signature,
+            levels_config,
+            analysis_options
+        )
+        st.session_state.analysis_results = None
+        st.session_state.analysis_metadata = None
+    elif st.session_state.pipeline_state.get('signature') != config_signature:
+        st.session_state.pipeline_state = _build_default_pipeline_state(
+            config_signature,
+            levels_config,
+            analysis_options
+        )
+        st.session_state.analysis_results = None
+        st.session_state.analysis_metadata = None
+    else:
+        pipeline_state = st.session_state.pipeline_state
+        pipeline_state['levels_config'] = levels_config.copy()
+        pipeline_state['analysis_options'] = analysis_options.copy()
+
+    pipeline_state = st.session_state.pipeline_state
+    pipeline_state['signature'] = config_signature
+    pipeline_state['api_key_available'] = bool(api_key)
+
+    dataforseo_ready = bool(dataforseo_service and dataforseo_service.is_configured())
+    pipeline_state['dataforseo_ready'] = dataforseo_ready
+
+    if not dataforseo_ready:
+        if pipeline_state['step_status'].get('volumes') != 'completed':
+            pipeline_state['step_status']['volumes'] = 'disabled'
+        if pipeline_state['step_status'].get('ads') != 'completed':
+            pipeline_state['step_status']['ads'] = 'disabled'
+    else:
+        if pipeline_state['step_status'].get('volumes') == 'disabled':
+            pipeline_state['step_status']['volumes'] = 'pending'
+        if pipeline_state['step_status'].get('ads') == 'disabled':
+            pipeline_state['step_status']['ads'] = 'pending'
+
+    wants_questions = analysis_options.get('generate_questions', False)
+    if not wants_questions or not api_key:
+        if pipeline_state['step_status'].get('questions') != 'completed':
+            pipeline_state['step_status']['questions'] = 'disabled'
+    else:
+        if pipeline_state['step_status'].get('questions') == 'disabled':
+            pipeline_state['step_status']['questions'] = 'pending'
+
+
+def reset_analysis_workflow(clear_results: bool = True) -> None:
+    """Réinitialiser l'ensemble du workflow"""
+    if 'pipeline_state' in st.session_state:
+        st.session_state.pipeline_state = None
+    if clear_results:
+        st.session_state.analysis_results = None
+        st.session_state.analysis_metadata = None
+    st.rerun()
+
+
+def run_step_collect_suggestions(
+    keywords_input: str,
+    levels_config: Dict[str, Any],
+    analysis_options: Dict[str, Any],
+    google_client: 'GoogleSuggestionsClient',
+    dataforseo_service: Optional[DataForSEOService],
+    api_key: Optional[str]
+) -> None:
+    """Étape 1 – Collecte des suggestions Google"""
+
+    pipeline_state = st.session_state.pipeline_state
+    keywords = parse_keywords_input(keywords_input)
+
+    if not keywords:
+        st.error("❌ Veuillez entrer au moins un mot-clé")
+        pipeline_state['step_status']['suggestions'] = 'error'
+        pipeline_state['messages']['suggestions'] = "Aucun mot-clé valide"
+        return
+
+    pipeline_state['step_status']['suggestions'] = 'running'
+    pipeline_state['messages']['suggestions'] = "Collecte en cours..."
+
+    st.info("🔍 Collecte des suggestions Google")
+    all_suggestions = collect_google_suggestions(
+        keywords,
+        levels_config,
+        google_client,
+        analysis_options['language']
+    )
+
+    if not all_suggestions:
+        pipeline_state['step_status']['suggestions'] = 'error'
+        pipeline_state['messages']['suggestions'] = "Aucune suggestion trouvée"
+        st.error("❌ Aucune suggestion trouvée")
+        return
+
+    pipeline_state['keywords'] = keywords
+    pipeline_state['levels_config'] = levels_config.copy()
+    pipeline_state['analysis_options'] = analysis_options.copy()
+    pipeline_state['suggestions'] = all_suggestions
+    pipeline_state['volume_results'] = None
+    pipeline_state['ads_suggestions'] = []
+    pipeline_state['enriched_data'] = {}
+    pipeline_state['themes_analysis'] = {}
+
+    wants_questions = analysis_options.get('generate_questions', False)
+    has_api_key = bool(api_key)
+    pipeline_state['generate_questions'] = wants_questions and has_api_key
+
+    if wants_questions and not has_api_key:
+        st.warning("⚠️ API OpenAI requise pour la génération de questions")
+
+    pipeline_state['step_status']['suggestions'] = 'completed'
+    pipeline_state['messages']['suggestions'] = f"{len(all_suggestions)} suggestions collectées"
+
+    if pipeline_state['dataforseo_ready']:
+        pipeline_state['step_status']['volumes'] = 'ready'
+        pipeline_state['messages']['volumes'] = "Prêt à récupérer les volumes"
+    else:
+        pipeline_state['step_status']['volumes'] = 'disabled'
+        pipeline_state['messages']['volumes'] = "Configurer DataForSEO pour activer cette étape"
+
+    pipeline_state['step_status']['ads'] = 'pending'
+    pipeline_state['messages']['ads'] = "En attente des volumes"
+
+    if pipeline_state['generate_questions']:
+        pipeline_state['step_status']['questions'] = 'pending'
+        pipeline_state['messages']['questions'] = "En attente des données enrichies"
+    else:
+        pipeline_state['step_status']['questions'] = 'disabled'
+        pipeline_state['messages']['questions'] = "Génération désactivée"
+
+    st.session_state.analysis_results = None
+    st.session_state.analysis_metadata = None
+
+    save_analysis_results(
+        all_suggestions,
+        {},
+        {},
+        keywords,
+        levels_config,
+        pipeline_state['generate_questions'],
+        analysis_options
+    )
+
+    if st.session_state.analysis_results:
+        st.session_state.analysis_results['stage'] = 'suggestions_collected'
+
+    st.success("✅ Suggestions Google collectées")
+
+
+def run_step_search_volume(
+    dataforseo_service: Optional[DataForSEOService]
+) -> None:
+    """Étape 2 – Récupération des volumes DataForSEO"""
+
+    pipeline_state = st.session_state.pipeline_state
+
+    if not dataforseo_service or not dataforseo_service.is_configured():
+        st.warning("⚠️ DataForSEO non configuré")
+        pipeline_state['step_status']['volumes'] = 'error'
+        pipeline_state['messages']['volumes'] = "Service indisponible"
+        return
+
+    if pipeline_state['step_status'].get('suggestions') != 'completed':
+        st.warning("⚠️ Veuillez d'abord collecter les suggestions")
+        return
+
+    pipeline_state['step_status']['volumes'] = 'running'
+    pipeline_state['messages']['volumes'] = "Récupération en cours"
+
+    keywords = pipeline_state['keywords']
+    suggestions = pipeline_state['suggestions']
+    suggestion_texts = [s['Suggestion Google'] for s in suggestions]
+
+    volume_results = dataforseo_service.enrich_keywords_with_volumes(keywords, suggestion_texts)
+
+    if not volume_results:
+        pipeline_state['step_status']['volumes'] = 'error'
+        pipeline_state['messages']['volumes'] = "Aucune donnée de volume"
+        return
+
+    keywords_with_volume = volume_results.get('keywords_with_volume', [])
+    total_unique_keywords = volume_results.get('total_keywords', len(set(keywords + suggestion_texts)))
+
+    dataset = dataforseo_service.build_enriched_dataset(
+        keywords,
+        volume_results,
+        ads_suggestions=[]
+    )
+
+    steps_summary = {
+        'dataforseo_volumes': {
+            'status': StepStatus.COMPLETED.value if keywords_with_volume else StepStatus.PARTIAL.value,
+            'metadata': {
+                'keywords_with_volume': len(keywords_with_volume),
+                'total_keywords': total_unique_keywords
+            }
+        },
+        'dataforseo_ads': {
+            'status': StepStatus.PENDING.value if keywords_with_volume else StepStatus.SKIPPED.value,
+            'metadata': {}
+        },
+        'dataforseo_enrichment': {
+            'status': StepStatus.COMPLETED.value,
+            'metadata': {'count': len(dataset.get('enriched_keywords', []))}
+        },
+        'dataforseo_deduplication': {
+            'status': StepStatus.COMPLETED.value,
+            'metadata': {'count': len(dataset.get('enriched_keywords', []))}
+        }
+    }
+
+    dataset['steps'] = steps_summary
+
+    pipeline_state['volume_results'] = volume_results
+    pipeline_state['enriched_data'] = dataset
+    pipeline_state['ads_suggestions'] = []
+
+    pipeline_state['step_status']['volumes'] = steps_summary['dataforseo_volumes']['status']
+    pipeline_state['messages']['volumes'] = (
+        f"{len(keywords_with_volume)} mots-clés avec volume" if keywords_with_volume
+        else "Aucun volume trouvé"
+    )
+
+    if keywords_with_volume:
+        pipeline_state['step_status']['ads'] = 'ready'
+        pipeline_state['messages']['ads'] = "Prêt pour la recherche Ads"
+    else:
+        pipeline_state['step_status']['ads'] = 'disabled'
+        pipeline_state['messages']['ads'] = "Pas de volumes pour lancer Ads"
+
+    if pipeline_state['generate_questions']:
+        pipeline_state['step_status']['questions'] = 'pending'
+        pipeline_state['messages']['questions'] = "En attente des suggestions Ads"
+
+    save_analysis_results(
+        suggestions,
+        dataset,
+        {},
+        keywords,
+        pipeline_state['levels_config'],
+        pipeline_state['generate_questions'],
+        pipeline_state['analysis_options']
+    )
+
+    if st.session_state.analysis_results:
+        st.session_state.analysis_results['stage'] = 'volumes_retrieved'
+
+    st.success("✅ Volumes de recherche récupérés")
+
+
+def run_step_ads_keywords(dataforseo_service: Optional[DataForSEOService]) -> None:
+    """Étape 3 – Suggestions Ads"""
+
+    pipeline_state = st.session_state.pipeline_state
+
+    if not dataforseo_service or not dataforseo_service.is_configured():
+        st.warning("⚠️ DataForSEO non configuré")
+        pipeline_state['step_status']['ads'] = 'error'
+        pipeline_state['messages']['ads'] = "Service indisponible"
+        return
+
+    if pipeline_state['step_status'].get('volumes') not in ['completed', StepStatus.PARTIAL.value]:
+        st.warning("⚠️ Lancez d'abord la récupération des volumes")
+        return
+
+    if pipeline_state['step_status'].get('ads') == 'disabled':
+        st.warning("⚠️ Aucun volume disponible pour lancer Ads")
+        return
+
+    volume_results = pipeline_state.get('volume_results')
+    if not volume_results or not volume_results.get('keywords_with_volume'):
+        st.warning("⚠️ Aucun mot-clé avec volume pour interroger Ads")
+        pipeline_state['step_status']['ads'] = 'disabled'
+        pipeline_state['messages']['ads'] = "Aucun volume disponible"
+        return
+
+    pipeline_state['step_status']['ads'] = 'running'
+    pipeline_state['messages']['ads'] = "Collecte des suggestions Ads"
+
+    ads_suggestions = dataforseo_service.get_ads_suggestions(
+        volume_results.get('keywords_with_volume', [])
+    )
+
+    ads_status = StepStatus.COMPLETED.value if ads_suggestions else StepStatus.PARTIAL.value
+
+    dataset = dataforseo_service.build_enriched_dataset(
+        pipeline_state['keywords'],
+        volume_results,
+        ads_suggestions=ads_suggestions
+    )
+
+    steps_summary = {
+        'dataforseo_volumes': {
+            'status': pipeline_state['step_status'].get('volumes', StepStatus.COMPLETED.value),
+            'metadata': {
+                'keywords_with_volume': len(volume_results.get('keywords_with_volume', []))
+            }
+        },
+        'dataforseo_ads': {
+            'status': ads_status,
+            'metadata': {
+                'returned_suggestions': len(ads_suggestions)
+            }
+        },
+        'dataforseo_enrichment': {
+            'status': StepStatus.COMPLETED.value,
+            'metadata': {'count': len(dataset.get('enriched_keywords', []))}
+        },
+        'dataforseo_deduplication': {
+            'status': StepStatus.COMPLETED.value,
+            'metadata': {'count': len(dataset.get('enriched_keywords', []))}
+        }
+    }
+
+    dataset['steps'] = steps_summary
+
+    pipeline_state['ads_suggestions'] = ads_suggestions
+    pipeline_state['enriched_data'] = dataset
+
+    pipeline_state['step_status']['ads'] = ads_status
+    pipeline_state['messages']['ads'] = (
+        f"{len(ads_suggestions)} suggestions Ads" if ads_suggestions else "Aucune suggestion Ads"
+    )
+
+    if pipeline_state['generate_questions']:
+        pipeline_state['step_status']['questions'] = 'ready'
+        pipeline_state['messages']['questions'] = "Prêt pour la génération des questions"
+    else:
+        pipeline_state['step_status']['questions'] = 'disabled'
+        pipeline_state['messages']['questions'] = "Génération désactivée"
+
+    save_analysis_results(
+        pipeline_state['suggestions'],
+        dataset,
+        {},
+        pipeline_state['keywords'],
+        pipeline_state['levels_config'],
+        pipeline_state['generate_questions'],
+        pipeline_state['analysis_options']
+    )
+
+    if st.session_state.analysis_results:
+        st.session_state.analysis_results['stage'] = 'ads_completed'
+
+    st.success("✅ Suggestions Ads récupérées")
+
+
+def run_step_generate_questions(
+    question_generator: 'QuestionGenerator',
+    analysis_options: Dict[str, Any]
+) -> None:
+    """Étape 4 – Génération des questions"""
+
+    pipeline_state = st.session_state.pipeline_state
+
+    if not pipeline_state['generate_questions']:
+        st.warning("⚠️ Génération de questions désactivée")
+        pipeline_state['step_status']['questions'] = 'disabled'
+        pipeline_state['messages']['questions'] = "Aucun générateur disponible"
+        return
+
+    if pipeline_state['step_status'].get('ads') not in ['completed', StepStatus.PARTIAL.value, 'disabled']:
+        st.warning("⚠️ Terminez d'abord les étapes précédentes")
+        return
+
+    if not pipeline_state['enriched_data'].get('enriched_keywords'):
+        st.warning("⚠️ Données enrichies indisponibles")
+        pipeline_state['step_status']['questions'] = 'error'
+        pipeline_state['messages']['questions'] = "Aucune donnée pour générer"
+        return
+
+    pipeline_state['step_status']['questions'] = 'running'
+    pipeline_state['messages']['questions'] = "Analyse des thèmes"
+
+    themes_analysis = analyze_themes_with_volume_filter(
+        pipeline_state['keywords'],
+        pipeline_state['suggestions'],
+        pipeline_state['enriched_data'],
+        question_generator,
+        analysis_options['language']
+    )
+
+    if not themes_analysis:
+        pipeline_state['step_status']['questions'] = 'error'
+        pipeline_state['messages']['questions'] = "Aucun thème généré"
+        st.warning("⚠️ Aucun thème généré à partir des volumes disponibles")
+        return
+
+    pipeline_state['themes_analysis'] = themes_analysis
+
+    save_analysis_results(
+        pipeline_state['suggestions'],
+        pipeline_state['enriched_data'],
+        themes_analysis,
+        pipeline_state['keywords'],
+        pipeline_state['levels_config'],
+        pipeline_state['generate_questions'],
+        pipeline_state['analysis_options']
+    )
+
+    selected_themes_by_keyword = {
+        keyword: themes
+        for keyword, themes in themes_analysis.items()
+        if themes
+    }
+
+    if not selected_themes_by_keyword:
+        pipeline_state['step_status']['questions'] = 'error'
+        pipeline_state['messages']['questions'] = "Thèmes vides"
+        st.warning("⚠️ Aucun thème exploitable pour générer des questions")
+        return
+
+    try:
+        generate_questions_from_themes(
+            selected_themes_by_keyword,
+            question_generator,
+            analysis_options['language'],
+            auto_rerun=False
+        )
+        generated_count = len(st.session_state.analysis_results.get('final_consolidated_data', []))
+        pipeline_state['step_status']['questions'] = 'completed'
+        pipeline_state['messages']['questions'] = f"{generated_count} questions générées"
+        st.success("🎉 Questions conversationnelles générées")
+    except Exception as exc:  # pragma: no cover
+        pipeline_state['step_status']['questions'] = 'error'
+        pipeline_state['messages']['questions'] = str(exc)
+        st.error(f"❌ Erreur lors de la génération des questions: {exc}")
+
+
+def render_step_status_summary(pipeline_state: Dict[str, Any]) -> None:
+    """Afficher le statut global des étapes"""
+
+    status_labels = {
+        'suggestions': "Suggestions Google",
+        'volumes': "Volumes de recherche",
+        'ads': "Recherche mots-clés (Ads)",
+        'questions': "Génération de questions"
+    }
+
+    status_text = {
+        'pending': "En attente",
+        'ready': "Prêt",
+        'running': "En cours",
+        'completed': "Terminé",
+        'partial': "Partiel",
+        'error': "Erreur",
+        'disabled': "Indisponible",
+        'skipped': "Ignoré"
+    }
+
+    status_icons = {
+        'pending': '⏳',
+        'ready': '🟡',
+        'running': '🔄',
+        'completed': '✅',
+        'partial': '🟡',
+        'error': '❌',
+        'disabled': '🚫',
+        'skipped': '⏭️'
+    }
+
+    statuses = pipeline_state.get('step_status', {})
+    messages = pipeline_state.get('messages', {})
+
+    cols = st.columns(len(status_labels))
+
+    for idx, (step_key, label) in enumerate(status_labels.items()):
+        status_value = statuses.get(step_key, 'pending')
+        icon = status_icons.get(status_value, '⏳')
+        readable_status = status_text.get(status_value, status_value)
+        message = messages.get(step_key, '')
+
+        with cols[idx]:
+            st.markdown(
+                f"{icon} **{label}**\n\n`{readable_status}`" +
+                (f"\n\n_{message}_" if message else "")
+            )
+
+    order = ['suggestions', 'volumes', 'ads', 'questions']
+    next_step = next(
+        (step for step in order if statuses.get(step) not in ['completed', 'disabled', 'skipped']),
+        None
+    )
+
+    if next_step:
+        st.info(f"➡️ Étape suivante : {status_labels[next_step]}")
+
+
+def render_analysis_workflow_controls(
+    keywords_input: str,
+    levels_config: Dict[str, Any],
+    analysis_options: Dict[str, Any],
+    google_client: 'GoogleSuggestionsClient',
+    question_generator: 'QuestionGenerator',
+    dataforseo_service: Optional[DataForSEOService],
+    api_key: Optional[str]
+) -> None:
+    """Interface utilisateur des étapes successives"""
+
+    pipeline_state = st.session_state.pipeline_state
+
+    st.markdown("### 🧭 Workflow d'analyse")
+
+    step_status = pipeline_state.get('step_status', {})
+
+    btn_cols = st.columns(4)
+
+    btn1 = btn_cols[0].button(
+        "1️⃣ Suggestions",
+        type="primary",
+        use_container_width=True,
+        disabled=not bool(parse_keywords_input(keywords_input))
+    )
+
+    volumes_disabled = (
+        step_status.get('volumes') == 'disabled' or
+        step_status.get('suggestions') != 'completed'
+    )
+
+    btn2 = btn_cols[1].button(
+        "2️⃣ Volumes",
+        type="secondary",
+        use_container_width=True,
+        disabled=volumes_disabled
+    )
+
+    ads_disabled = (
+        step_status.get('ads') == 'disabled' or
+        step_status.get('volumes') not in ['completed', StepStatus.PARTIAL.value]
+    )
+
+    btn3 = btn_cols[2].button(
+        "3️⃣ Recherche mots-clés",
+        type="secondary",
+        use_container_width=True,
+        disabled=ads_disabled
+    )
+
+    questions_disabled = (
+        step_status.get('questions') == 'disabled' or
+        (step_status.get('ads') not in ['completed', StepStatus.PARTIAL.value, 'disabled'])
+    )
+
+    btn4 = btn_cols[3].button(
+        "4️⃣ Génération questions",
+        type="secondary",
+        use_container_width=True,
+        disabled=questions_disabled
+    )
+
+    if btn1:
+        run_step_collect_suggestions(
+            keywords_input,
+            levels_config,
+            analysis_options,
+            google_client,
+            dataforseo_service,
+            api_key
+        )
+
+    if btn2:
+        run_step_search_volume(dataforseo_service)
+
+    if btn3:
+        run_step_ads_keywords(dataforseo_service)
+
+    if btn4:
+        run_step_generate_questions(question_generator, analysis_options)
+
+    render_step_status_summary(pipeline_state)
+
+    reset_col, _ = st.columns([1, 3])
+    if reset_col.button("🧹 Réinitialiser le workflow", use_container_width=True):
+        reset_analysis_workflow()
 
 def run_analysis(keywords_input, levels_config, google_client, question_generator,
                 dataforseo_service, api_key, analysis_options):
@@ -444,7 +1094,7 @@ def render_theme_selection(question_generator, language):
                 selected_themes_by_keyword, question_generator, language
             )
 
-def generate_questions_from_themes(selected_themes_by_keyword, question_generator, language):
+def generate_questions_from_themes(selected_themes_by_keyword, question_generator, language, auto_rerun: bool = True):
     """Génération des questions à partir des thèmes sélectionnés"""
     
     metadata = st.session_state.analysis_metadata
@@ -476,7 +1126,8 @@ def generate_questions_from_themes(selected_themes_by_keyword, question_generato
     })
     
     st.success(f"🎉 {len(sorted_questions)} questions générées!")
-    st.rerun()
+    if auto_rerun:
+        st.rerun()
 
 def render_instructions_tab():
     """Onglet des instructions"""

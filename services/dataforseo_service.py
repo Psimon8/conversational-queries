@@ -432,3 +432,37 @@ class DataForSEOService:
     def estimate_cost(self, keywords_count: int, enable_ads_suggestions: bool = True) -> Dict[str, Any]:
         """Estimer le coût des requêtes DataForSEO"""
         return self.client.estimate_cost(keywords_count, enable_ads_suggestions)
+
+    def build_enriched_dataset(
+        self,
+        original_keywords: List[str],
+        volume_results: Dict[str, Any],
+        ads_suggestions: Optional[List[Dict[str, Any]]] = None,
+        steps_summary: Optional[Dict[str, Dict[str, Any]]] = None
+    ) -> Dict[str, Any]:
+        """Assembler un jeu de données enrichi à partir des résultats intermédiaires"""
+
+        ads_suggestions = ads_suggestions or []
+        volume_data = volume_results.get('volume_data', [])
+        keywords_with_volume = volume_results.get('keywords_with_volume', [])
+
+        enriched_keywords = self._create_enriched_keywords_list(
+            original_keywords,
+            volume_data,
+            ads_suggestions
+        )
+        deduplicated_keywords = deduplicate_keywords_with_origins(enriched_keywords)
+
+        dataset = {
+            'volume_data': volume_data,
+            'ads_suggestions': ads_suggestions,
+            'enriched_keywords': deduplicated_keywords,
+            'keywords_with_volume': keywords_with_volume,
+            'total_keywords': len(deduplicated_keywords),
+            'top_20_keywords_count': min(20, len(keywords_with_volume))
+        }
+
+        if steps_summary is not None:
+            dataset['steps'] = steps_summary
+
+        return dataset
