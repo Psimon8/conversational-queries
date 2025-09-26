@@ -56,6 +56,8 @@ class QuestionGenerator:
                 }
             }
         }
+        # Valeur par défaut pour générer les questions conversationnelles
+        self.generate_questions_default = False
     
     def set_client(self, client):
         """Définir le client OpenAI"""
