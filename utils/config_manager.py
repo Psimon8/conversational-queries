@@ -122,7 +122,9 @@ class ConfigManager:
                     'en': '🇺🇸 Anglais', 
                     'es': '🇪🇸 Espagnol',
                     'de': '🇩🇪 Allemand',
-                    'it': '🇮🇹 Italien'
+                    'it': '🇮🇹 Italien',
+                    'pt': '🇵🇹 Português',
+                    'pt-BR': '🇧🇷 Português (Brasil)'
                 }
                 selected_lang = st.selectbox(
                     "Langue",
@@ -142,6 +144,8 @@ class ConfigManager:
                     'es': '🇪🇸 Espagne',
                     'de': '🇩🇪 Allemagne',
                     'it': '🇮🇹 Italie',
+                    'pt': '🇵🇹 Portugal',
+                    'br': '🇧🇷 Brésil',
                     'ca': '🇨🇦 Canada',
                     'au': '🇦🇺 Australie'
                 }
@@ -216,7 +220,9 @@ class ConfigManager:
             'en': '🇺🇸 Anglais', 
             'es': '🇪🇸 Espagnol',
             'de': '🇩🇪 Allemand',
-            'it': '🇮🇹 Italien'
+            'it': '🇮🇹 Italien',
+            'pt': '🇵🇹 Português',
+            'pt-BR': '🇧🇷 Português (Brasil)'
         }
         selected_lang = st.sidebar.selectbox(
             "Langue des suggestions et questions",

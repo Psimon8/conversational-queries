@@ -54,6 +54,24 @@ class QuestionGenerator:
                     'navigational': '"Dove trovare...", "Come accedere...", "Quale indirizzo..."',
                     'local': '"... vicino a me", "... nella mia città", "... nella mia regione"'
                 }
+            },
+            'pt': {
+                'system': "És um especialista em SEO especializado na análise de consultas conversacionais e otimização para motores de busca. Responde SEMPRE em português.",
+                'examples': {
+                    'informational': '"Como...", "Porquê...", "O que é...", "Quais são..."',
+                    'transactional': '"Quanto custa...", "Onde comprar...", "Como reservar...", "Que preço..."',
+                    'navigational': '"Onde encontrar...", "Como aceder...", "Que morada..."',
+                    'local': '"... perto de mim", "... na minha cidade", "... na minha região"'
+                }
+            },
+            'pt-BR': {
+                'system': "Você é um especialista em SEO especializado na análise de consultas conversacionais e otimização para mecanismos de busca. Responda SEMPRE em português brasileiro.",
+                'examples': {
+                    'informational': '"Como...", "Por que...", "O que é...", "Quais são..."',
+                    'transactional': '"Quanto custa...", "Onde comprar...", "Como reservar...", "Qual preço..."',
+                    'navigational': '"Onde encontrar...", "Como acessar...", "Qual endereço..."',
+                    'local': '"... perto de mim", "... na minha cidade", "... na minha região"'
+                }
             }
         }
         # Valeur par défaut pour générer les questions conversationnelles
@@ -300,6 +318,31 @@ class QuestionGenerator:
             
             Presenta las preguntas como una lista numerada del 1 al {num_questions}.
             """
+        elif language in ['pt', 'pt-BR']:
+            verb_form = "Analisa" if language == 'pt' else "Analise"
+            prompt = f"""
+            Palavra-chave principal: "{keyword}"
+            Sugestão analisada: "{suggestion}"
+            Categoria: {category}
+            Intenção: {intent}
+            Pontuação de relevância: {relevance}/10
+            
+            Gera EXATAMENTE {num_questions} perguntas conversacionais otimizadas para SEO que:
+            - Estejam adaptadas à categoria "{category}" e intenção "{intent}"
+            - Integrem naturalmente o contexto da sugestão
+            - Sejam formuladas como perguntas que os utilizadores realmente fariam
+            - Estejam otimizadas para busca por voz
+            - Terminem com ponto de interrogação
+            - Tenham comprimento apropriado (nem muito curtas nem muito longas)
+            
+            Exemplos de formulações conforme a intenção:
+            - Informacional: {examples['informational']}
+            - Transacional: {examples['transactional']}
+            - Navegacional: {examples['navigational']}
+            - Local: {examples['local']}
+            
+            Apresenta as perguntas como uma lista numerada de 1 a {num_questions}.
+            """
         else:  # Default français
             prompt = f"""
             Mot-clé principal : "{keyword}"
@@ -398,6 +441,34 @@ class QuestionGenerator:
                         "intention": "informational",
                         "importance": 4,
                         "exemples_suggestions": ["sugerencia1", "sugerencia2"]
+                    }}
+                ]
+            }}
+            """
+        elif language in ['pt', 'pt-BR']:
+            verb_form = "Analisa" if language == 'pt' else "Analise"
+            prompt = f"""
+            {verb_form} estas sugestões do Google para a palavra-chave principal "{keyword}" e identifica temas recorrentes:
+            
+            Sugestões para analisar:
+            {chr(10).join([f"- {s}" for s in suggestions_sample])}
+            
+            Identifica os 5-10 TEMAS PRINCIPAIS que emergem destas sugestões.
+            Para cada tema, indica:
+            1. O nome do tema
+            2. Palavras-chave/conceitos recorrentes
+            3. A intenção de busca dominante
+            4. O nível de importância (1-5)
+            
+            Responde APENAS em formato JSON:
+            {{
+                "themes": [
+                    {{
+                        "nom": "nome_do_tema",
+                        "concepts": ["conceito1", "conceito2"],
+                        "intention": "informational",
+                        "importance": 4,
+                        "exemples_suggestions": ["sugestao1", "sugestao2"]
                     }}
                 ]
             }}
@@ -531,6 +602,32 @@ class QuestionGenerator:
                     - Local: {examples['local']}
                     
                     Presenta las preguntas como una lista numerada del 1 al {theme_questions}.
+                    """
+                elif language in ['pt', 'pt-BR']:
+                    prompt = f"""
+                    Gera EXATAMENTE {theme_questions} perguntas conversacionais de SEO para:
+                    
+                    Palavra-chave principal: "{keyword}"
+                    Tema: "{theme_name}"
+                    Conceitos principais: {concepts}
+                    Intenção: {intention}
+                    Exemplos de sugestões: {exemples}
+                    
+                    As perguntas devem:
+                    1. Ser naturais e conversacionais
+                    2. Integrar naturalmente o tema "{theme_name}"
+                    3. Corresponder à intenção "{intention}"
+                    4. Estar otimizadas para busca por voz
+                    5. Terminar com ponto de interrogação
+                    6. Ser variadas e complementares
+                    
+                    Formulações conforme a intenção:
+                    - Informacional: {examples['informational']}
+                    - Transacional: {examples['transactional']}
+                    - Navegacional: {examples['navigational']}
+                    - Local: {examples['local']}
+                    
+                    Apresenta as perguntas como uma lista numerada de 1 a {theme_questions}.
                     """
                 else:  # Default français
                     prompt = f"""
